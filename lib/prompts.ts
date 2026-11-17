@@ -1,6 +1,7 @@
-// Static system prompts (no user data) and compact input builders.
-// Note: these prompts are below the minimum cacheable prefix, so savings come from the response cache, not prompt caching.
-import type { Job, Profile } from "./schemas";
+// Static system prompts (no user data) and compact input builders for the match pipeline.
+// The prompts sit below the minimum cacheable prefix, so savings come from the response cache, not prompt caching.
+import type { Ranked } from "./prefilter";
+import type { Profile } from "./schemas";
 import { descriptionExcerpt } from "./text";
 
 export const PROFILE_SYSTEM = `You read a candidate's resume and extract a compact job-search profile.
@@ -12,26 +13,43 @@ Return JSON with exactly these keys:
   "isResume": boolean,          // true only if this is a person's resume/CV
   "headline": string,           // e.g. "Senior backend engineer, 7 yrs, payments and distributed systems"
   "seniority": "intern"|"junior"|"mid"|"senior"|"staff"|"principal"|"manager"|"director",
-  "yearsExperience": number,
+  "yearsExperience": number,    // total professional years, from the dates in the resume
+  "country": string | null,     // country the candidate lives in now, in English (e.g. "India"); null if unknown
   "targetTitles": string[],     // 2-5 job titles this person should apply for next, as companies phrase them
-  "skills": string[],           // up to 20 concrete skills/technologies, most important first, short canonical names ("Go", "Kubernetes", "React")
+  "skills": string[],           // up to 20 concrete skills/technologies, most important first, short canonical names ("Go", "Kubernetes")
   "domains": string[],          // up to 6 industries or problem areas ("payments", "developer tools")
   "locations": string[],        // cities/countries they live in or ask for; [] if unknown
   "openToRemote": boolean,      // true unless the resume says on-site only
   "highlights": string[]        // up to 5 strongest achievements, one short line each, with numbers when present
 }
+Target titles must fit yearsExperience: 0-2 years junior or entry-level, 3-5 mid-level, 6-9 senior,
+10+ staff/principal or manager if they have led teams. Never suggest a level above that.
 Base everything on the resume only. Do not invent skills.`;
 
-export const SCORE_SYSTEM = `You are a demanding technical recruiter. For each job, judge how strong a match it is for the candidate.
+export const FAST_SCORE_SYSTEM = `You screen jobs for a candidate. For each job give a quick, strict fit score.
+
+Scores are 0-100:
+- "score": overall fit. 85+ excellent; 70-84 strong (would likely pass a recruiter screen); 55-69 good but a real gap; below 55 not worth applying.
+- "skills": how well the candidate's skills cover the job's stated must-haves.
+- "seniority": how well the candidate's level and years fit the role's level.
+- "domain": how close the candidate's industry/problem-area experience is.
+- "gap": the single most important stated requirement the candidate lacks, max 12 words; "" if none.
+Each job shows a "Location fit" line already computed for this candidate; weigh it in "score" (poor location fit lowers it).
+Use only the job text and candidate profile given. Do not reward keyword overlap alone.
+
+Return JSON: {"results":[{"id": string, "score": number, "skills": number, "seniority": number, "domain": number, "gap": string}]}
+Include every job id you were given, exactly once, ids copied exactly.`;
+
+export const EXPLAIN_SYSTEM = `You are a demanding technical recruiter. For each job, give a calibrated match score and explain it.
 
 Scoring rubric (0-100):
-- 85-100: would very likely pass a recruiter screen; role, level and core skills all line up
-- 75-84: strong match with one minor gap
-- 60-74: plausible but a real gap (level, key skill, domain or location)
-- below 60: not a good use of the candidate's time
-Weigh: role and level fit first, then must-have skills, then domain, then location/remote.
-Be strict and consistent. Do not reward keyword overlap alone.
-Use only the job text and candidate profile given. Never assume facts about a company (its tech stack, team, culture) that the job text does not state.
+- 85-100: excellent; role, level and core skills all line up
+- 70-84: strong; would very likely pass a recruiter screen, at most one minor gap
+- 55-69: good; plausible but with a real gap (level, key skill, domain or location)
+- below 55: not a good use of the candidate's time
+Weigh: role and level fit first, then must-have skills, then domain, then the given location fit.
+Be strict and consistent. Use only the job text and candidate profile given. Never assume facts about a company
+(its tech stack, team, culture) that the job text does not state.
 
 For every job return:
 - "reasons": 1-3 short lines (max ~20 words each) naming concrete evidence from the candidate profile that fits this job
@@ -41,36 +59,38 @@ Return JSON: {"results":[{"id": string, "score": number, "reasons": string[], "g
 Include every job id you were given, exactly once, ids copied exactly.`;
 
 /** Board and resume text must not be able to close our <job>/<candidate> wrappers (prompt injection). */
-function neutralise(s: string): string {
+export function neutralise(s: string): string {
   return s.replace(/<(\/?)(job|candidate|user_input)/gi, "&lt;$1$2");
 }
 
 /** Only the fields that matter for fit: keeps every scoring call small. */
 export function profileForScoring(p: Profile): string {
-  return neutralise(JSON.stringify({
-    headline: p.headline,
-    seniority: p.seniority,
-    yearsExperience: p.yearsExperience,
-    skills: p.skills,
-    domains: p.domains,
-    locations: p.locations,
-    openToRemote: p.openToRemote,
-    highlights: p.highlights,
-  }));
+  return neutralise(
+    JSON.stringify({
+      headline: p.headline,
+      seniority: p.seniority,
+      yearsExperience: p.yearsExperience,
+      country: p.country,
+      skills: p.skills,
+      domains: p.domains,
+      openToRemote: p.openToRemote,
+      highlights: p.highlights,
+    }),
+  );
 }
 
-export const EXCERPT_CHARS = 1_400;
-
-export function scoreInput(profile: Profile, jobs: Job[]): string {
-  const jobBlocks = jobs.map((j) =>
+/** Job blocks with the deterministic location verdict included, so the model never guesses geography. */
+export function jobsInput(profile: Profile, ranked: Ranked[], excerptChars: number): string {
+  const blocks = ranked.map(({ job: j, locationFit }) =>
     [
       `<job id="${j.id}">`,
       neutralise(`Title: ${j.title}`),
       neutralise(`Company: ${j.company}${j.department ? ` / ${j.department}` : ""}`),
-      neutralise(`Location: ${j.location}${j.remote ? " (remote possible)" : ""}`),
-      neutralise(descriptionExcerpt(j.description, EXCERPT_CHARS)),
+      neutralise(`Location: ${j.location}`),
+      `Location fit for this candidate: ${locationFit.label} (${Math.round(locationFit.score * 100)}/100)`,
+      neutralise(descriptionExcerpt(j.description, excerptChars)),
       `</job>`,
     ].join("\n"),
   );
-  return `<candidate>\n${profileForScoring(profile)}\n</candidate>\n\n${jobBlocks.join("\n\n")}`;
+  return `<candidate>\n${profileForScoring(profile)}\n</candidate>\n\n${blocks.join("\n\n")}`;
 }

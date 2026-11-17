@@ -1,5 +1,7 @@
-import { NEAR_SCORE, STRONG_SCORE, type MatchResult } from "@/lib/schemas";
+import { GOOD_SCORE, STRONG_SCORE } from "@/lib/schemas";
+import type { MatchResult, ScoredJob, Tier } from "@/lib/types";
 import JobCard from "./JobCard";
+import ResultSummary from "./ResultSummary";
 
 type Props = { result: MatchResult; closedIds: Set<string>; restored: boolean; onRerun: () => void };
 
@@ -11,14 +13,18 @@ function timeAgo(iso: string): string {
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 }
 
+const SECTIONS: { tier: Tier; title: string; note: string }[] = [
+  { tier: "strong", title: "Strong matches", note: `Scored ${STRONG_SCORE}+: likely to pass a recruiter screen.` },
+  { tier: "good", title: "Good matches", note: `Scored ${GOOD_SCORE}-${STRONG_SCORE - 1}: worth applying, with a gap to address.` },
+  { tier: "closest", title: "Closest available", note: `Nothing scored ${GOOD_SCORE}+ right now. These are the nearest roles, with honest gaps.` },
+];
+
 export default function Results({ result, closedIds, restored, onRerun }: Props) {
-  const { matches, nearMisses, stats, cost, profile } = result;
-  const failed = stats.boards.filter((b) => !b.ok);
-  const closedCount = [...matches, ...nearMisses].filter((m) => closedIds.has(m.job.id)).length;
-  const unscored = stats.unscored ?? 0;
+  const closedCount = result.matches.filter((m) => closedIds.has(m.job.id)).length;
+  const byTier = (t: Tier): ScoredJob[] => result.matches.filter((m) => m.tier === t);
 
   return (
-    <div className="fade-in space-y-4">
+    <div className="fade-in space-y-6">
       {restored && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-zinc-50 px-6 py-3 text-sm">
           <span>
@@ -35,66 +41,37 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
         </div>
       )}
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <h2 className="text-2xl font-semibold">
-          <span className="text-indigo-600">{matches.length}</span> strong {matches.length === 1 ? "match" : "matches"}
-        </h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          From {stats.jobsScanned.toLocaleString()} open roles at {stats.boards.length} companies · {stats.analysed} closest
-          reviewed by AI · {(stats.ms / 1000).toFixed(1)}s · AI cost ${cost.usd.toFixed(3)}
-        </p>
-        <div className="mt-4 border-t border-zinc-200 pt-4 text-sm">
-          <p className="text-zinc-500">How we read your resume</p>
-          <p className="mt-1">{profile.headline}</p>
-          <ul className="mt-2 flex flex-wrap gap-1" aria-label="Skills we matched on">
-            {profile.skills.map((s) => (
-              <li key={s} className="rounded-md bg-zinc-50 px-2 py-0.5 text-zinc-500 ring-1 ring-zinc-200">
-                {s}
-              </li>
-            ))}
-          </ul>
-        </div>
-        {failed.length > 0 && (
-          <p className="mt-4 text-sm text-amber-700">
-            Couldn&apos;t reach {failed.map((b) => b.company).join(", ")} just now
-            {failed.some((b) => b.stale) ? "; using their last known jobs." : "; their jobs are missing from this search."}
-          </p>
-        )}
-        {unscored > 0 && (
-          <p className="mt-4 text-sm text-amber-700">
-            {unscored} of the closest roles couldn&apos;t be reviewed by AI this time. Run the search again to include them.
-          </p>
-        )}
-      </section>
+      <ResultSummary result={result} />
 
-      {matches.length > 0 ? (
-        <ul className="space-y-4" aria-label="Strong matches">
-          {matches.map((m) => (
-            <JobCard key={m.job.id} match={m} closed={closedIds.has(m.job.id)} />
-          ))}
-        </ul>
-      ) : (
+      {result.matches.length === 0 && (
         <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm">
-          <p className="font-semibold">No strong matches right now.</p>
+          <p className="font-semibold">No roles on these boards line up with this resume.</p>
           <p className="mt-1 text-zinc-500">
-            We only show roles that scored {STRONG_SCORE} or higher. Make sure your resume lists the roles and skills you want next, or
-            check back after the next job refresh.
+            None of the {result.stats.jobsScanned.toLocaleString()} open roles shares a title or core skills with it. Check that your
+            resume names the roles and skills you want next.
           </p>
         </section>
       )}
 
-      {nearMisses.length > 0 && (
-        <details className="group rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <summary className="cursor-pointer rounded-lg text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600">
-            {nearMisses.length} near {nearMisses.length === 1 ? "miss" : "misses"} (score {NEAR_SCORE}-{STRONG_SCORE - 1}) worth a look
-          </summary>
-          <ul className="mt-4 space-y-4">
-            {nearMisses.map((m) => (
-              <JobCard key={m.job.id} match={m} closed={closedIds.has(m.job.id)} />
-            ))}
-          </ul>
-        </details>
-      )}
+      {SECTIONS.map(({ tier, title, note }) => {
+        const jobs = byTier(tier);
+        if (jobs.length === 0) return null;
+        return (
+          <section key={tier} aria-labelledby={`tier-${tier}`}>
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <h2 id={`tier-${tier}`} className="text-base font-semibold">
+                {title} <span className="text-zinc-500">({jobs.length})</span>
+              </h2>
+              <p className="hidden text-sm text-zinc-500 sm:block">{note}</p>
+            </div>
+            <ul className="space-y-4">
+              {jobs.map((m) => (
+                <JobCard key={m.job.id} match={m} closed={closedIds.has(m.job.id)} />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }

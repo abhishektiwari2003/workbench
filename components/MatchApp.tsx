@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { callApi } from "@/lib/client-api";
-import { RESUME_MAX, RESUME_MIN, type MatchResult } from "@/lib/schemas";
+import { RESUME_MAX, RESUME_MIN } from "@/lib/schemas";
+import type { MatchResult } from "@/lib/types";
 import ResumeInput from "./ResumeInput";
 import Results from "./Results";
 import ResultsSkeleton from "./ResultsSkeleton";
@@ -113,8 +114,8 @@ export default function MatchApp() {
       setClosedIds(new Set());
       setRestored(false);
       remember(res.data.id, text);
-      const n = res.data.matches.length;
-      setAnnounce(`Found ${n} strong ${n === 1 ? "match" : "matches"}.`);
+      const n = res.data.matches.filter((m) => m.tier !== "closest").length;
+      setAnnounce(n ? `Found ${n} ${n === 1 ? "match" : "matches"}.` : "No strong or good matches; showing the closest roles.");
     } catch {
       return; // aborted by a newer submit
     } finally {

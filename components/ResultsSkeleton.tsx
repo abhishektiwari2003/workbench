@@ -7,7 +7,7 @@ export default function ResultsSkeleton({ jobsTotal }: { jobsTotal: number | nul
         <div className="h-8 w-56 animate-pulse rounded-md bg-zinc-100" />
         <p className="mt-2 text-sm text-zinc-500">
           Reading your resume and scanning {jobsTotal ? jobsTotal.toLocaleString() : "every"} open role across 10
-          companies. The closest {SHORTLIST_SIZE} get a full AI review. About 10 seconds.
+          companies. The closest {SHORTLIST_SIZE} are scored by AI and the best explained. About 15 seconds.
         </p>
         <div className="mt-4 h-4 w-3/4 animate-pulse rounded bg-zinc-100" />
       </section>

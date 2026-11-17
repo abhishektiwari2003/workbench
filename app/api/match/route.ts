@@ -1,6 +1,6 @@
 // POST /api/match  { resumeText } -> MatchResult
 import { fail, handleError, ok, parseBody } from "@/lib/api";
-import { runMatch } from "@/lib/matcher";
+import { runMatch } from "@/lib/pipeline/run";
 import { clientKey, LIMITS, limitOr429, rateLimit } from "@/lib/rate-limit";
 import { MatchRequestSchema } from "@/lib/schemas";
 

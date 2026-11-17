@@ -24,7 +24,8 @@ export async function POST(req: Request) {
   const limited = limitOr429(clientKey(req, "jobs-refresh"), LIMITS.jobsRefresh, "Refresh already ran.");
   if (limited) return limited;
   try {
-    return ok(await refreshJobs());
+    const { after, added, closed } = await refreshJobs();
+    return ok({ total: after.jobs.length, added: added.length, closed: closed.length, boards: after.boards, fetchedAt: new Date(after.fetchedAt).toISOString() });
   } catch (err) {
     return handleError(err);
   }

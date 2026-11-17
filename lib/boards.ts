@@ -1,12 +1,15 @@
 // Fetches and normalises open jobs from the 10 public boards.
 // One shared in-memory snapshot with a TTL and single-flight loading, so N users cost one fetch.
+// Per-board progress is published as boards settle, so a live UI can tick each one off.
 import { z } from "zod";
 import { AppError } from "./api";
-import type { BoardStatus, Job } from "./schemas";
-import { collapse, htmlToText } from "./text";
+import { fromAshby, fromGreenhouse } from "./board-parse";
+import { recordBoard } from "./metrics";
+import type { BoardStatus, Job } from "./types";
 
 type Source = "greenhouse" | "ashby";
-export const BOARDS: { company: string; slug: string; source: Source }[] = [
+type Board = { company: string; slug: string; source: Source };
+export const BOARDS: Board[] = [
   { company: "Stripe", slug: "stripe", source: "greenhouse" },
   { company: "Databricks", slug: "databricks", source: "greenhouse" },
   { company: "Airbnb", slug: "airbnb", source: "greenhouse" },
@@ -21,74 +24,16 @@ export const BOARDS: { company: string; slug: string; source: Source }[] = [
 
 const TTL_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 20_000;
-const MAX_DESCRIPTION = 6_000;
-
-// External payloads are validated too; a malformed job is skipped, not fatal.
-// Ids are interpolated into prompts and urls into hrefs, so both are constrained.
-const SafeId = z.string().regex(/^[\w-]+$/);
-const HttpsUrl = z.string().regex(/^https:\/\/[^\s"<>]+$/);
-const GreenhouseJob = z.object({
-  id: z.union([z.number(), SafeId]),
-  title: z.string(),
-  absolute_url: HttpsUrl,
-  location: z.object({ name: z.string().nullish() }).nullish(),
-  updated_at: z.string().nullish(),
-  content: z.string().nullish(),
-  departments: z.array(z.object({ name: z.string() })).nullish(),
-});
-const AshbyJob = z.object({
-  id: SafeId,
-  title: z.string(),
-  jobUrl: HttpsUrl,
-  location: z.string().nullish(),
-  secondaryLocations: z.array(z.object({ location: z.string().nullish() })).nullish(),
-  isRemote: z.boolean().nullish(),
-  workplaceType: z.string().nullish(),
-  department: z.string().nullish(),
-  publishedAt: z.string().nullish(),
-  descriptionPlain: z.string().nullish(),
-  isListed: z.boolean().nullish(),
-});
 const Payload = z.object({ jobs: z.array(z.unknown()) });
 
-function fromGreenhouse(company: string, raw: unknown): Job | null {
-  const p = GreenhouseJob.safeParse(raw);
-  if (!p.success) return null;
-  const j = p.data;
-  const location = j.location?.name?.trim() || "Unspecified";
-  return {
-    id: `gh:${company.toLowerCase()}:${j.id}`,
-    company,
-    title: j.title.trim(),
-    location,
-    remote: /remote/i.test(location),
-    department: j.departments?.[0]?.name?.replace(/^\d+\s+/, "") ?? "",
-    url: j.absolute_url,
-    postedAt: j.updated_at ?? undefined,
-    description: htmlToText(j.content ?? "").slice(0, MAX_DESCRIPTION),
-  };
+// Dev-only fault injection to demo graceful degradation, e.g. SIMULATE_BOARD_FAILURE=linear. Ignored in production.
+function simulatedFailure(slug: string): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return (process.env.SIMULATE_BOARD_FAILURE ?? "").toLowerCase().split(",").includes(slug);
 }
 
-function fromAshby(company: string, raw: unknown): Job | null {
-  const p = AshbyJob.safeParse(raw);
-  if (!p.success || p.data.isListed === false) return null;
-  const j = p.data;
-  const extra = (j.secondaryLocations ?? []).map((l) => l.location).filter(Boolean);
-  const location = [j.location, ...extra].filter(Boolean).join("; ") || "Unspecified";
-  return {
-    id: `ab:${company.toLowerCase()}:${j.id}`,
-    company,
-    title: j.title.trim(),
-    location,
-    remote: Boolean(j.isRemote) || j.workplaceType === "Remote" || /remote/i.test(location),
-    department: j.department ?? "",
-    url: j.jobUrl,
-    postedAt: j.publishedAt ?? undefined,
-    description: collapse(j.descriptionPlain ?? "").slice(0, MAX_DESCRIPTION),
-  };
-}
-
-async function fetchBoard(b: (typeof BOARDS)[number]): Promise<Job[]> {
+async function fetchBoard(b: Board): Promise<Job[]> {
+  if (simulatedFailure(b.slug)) throw new Error(`${b.company} board failure (simulated)`);
   const url =
     b.source === "greenhouse"
       ? `https://boards-api.greenhouse.io/v1/boards/${b.slug}/jobs?content=true`
@@ -104,26 +49,35 @@ export type Snapshot = { jobs: Job[]; byId: Map<string, Job>; boards: BoardStatu
 
 let snapshot: Snapshot | null = null;
 let inflight: Promise<Snapshot> | null = null;
+let progress: BoardStatus[] = []; // boards settled so far in the in-flight load
+const listeners = new Set<(b: BoardStatus) => void>();
+
+async function loadBoard(b: Board, previous: Snapshot | null): Promise<{ status: BoardStatus; jobs: Job[] }> {
+  const started = Date.now();
+  let out: { status: BoardStatus; jobs: Job[] };
+  try {
+    const jobs = await fetchBoard(b);
+    out = { status: { company: b.company, ok: true, count: jobs.length, ms: Date.now() - started }, jobs };
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: "board_fetch_failed", company: b.company, error: String(err) }));
+    // A failed board keeps its last good jobs (marked stale) rather than vanishing from results.
+    const kept = previous?.jobs.filter((j) => j.company === b.company) ?? [];
+    out = { status: { company: b.company, ok: false, count: kept.length, ms: Date.now() - started, stale: kept.length > 0 }, jobs: kept };
+  }
+  progress.push(out.status);
+  recordBoard(out.status);
+  for (const l of listeners) l(out.status);
+  return out;
+}
 
 async function loadAll(previous: Snapshot | null): Promise<Snapshot> {
-  const settled = await Promise.allSettled(BOARDS.map(fetchBoard));
-  const jobs: Job[] = [];
-  const boards: BoardStatus[] = settled.map((r, i) => {
-    const company = BOARDS[i].company;
-    if (r.status === "fulfilled") {
-      jobs.push(...r.value);
-      return { company, ok: true, count: r.value.length };
-    }
-    console.warn(JSON.stringify({ evt: "board_fetch_failed", company, error: String(r.reason) }));
-    // A failed board keeps its last good jobs (marked stale) rather than vanishing from results.
-    const kept = previous?.jobs.filter((j) => j.company === company) ?? [];
-    jobs.push(...kept);
-    return { company, ok: false, count: kept.length, stale: kept.length > 0 };
-  });
+  progress = [];
+  const loaded = await Promise.all(BOARDS.map((b) => loadBoard(b, previous)));
+  const jobs = loaded.flatMap((l) => l.jobs);
   if (jobs.length === 0) {
     throw new AppError("The job boards aren't responding right now. Please try again in a minute.", 503, "boards_unavailable");
   }
-  return { jobs, byId: new Map(jobs.map((j) => [j.id, j])), boards, fetchedAt: Date.now() };
+  return { jobs, byId: new Map(jobs.map((j) => [j.id, j])), boards: loaded.map((l) => l.status), fetchedAt: Date.now() };
 }
 
 function load(): Promise<Snapshot> {
@@ -136,16 +90,25 @@ function load(): Promise<Snapshot> {
 /**
  * Cached snapshot of every open job. Concurrent callers share one in-flight load.
  * Past the TTL it serves the old snapshot and refreshes in the background, so no user waits on a refetch.
+ * `onBoard` receives each board's status: immediately from the snapshot, or live as boards settle.
  */
-export async function getJobs(force = false): Promise<Snapshot> {
+export async function getJobs(opts: { force?: boolean; onBoard?: (b: BoardStatus) => void } = {}): Promise<Snapshot> {
+  const { force = false, onBoard } = opts;
   if (!force && snapshot) {
-    if (Date.now() - snapshot.fetchedAt >= TTL_MS) load().catch(() => {}); // logged per board in loadAll
+    if (Date.now() - snapshot.fetchedAt >= TTL_MS) load().catch(() => {}); // logged per board in loadBoard
+    snapshot.boards.forEach((b) => onBoard?.(b));
     return snapshot;
   }
-  return load();
+  const p = load();
+  if (onBoard) {
+    progress.forEach(onBoard); // boards that already settled before this caller joined
+    listeners.add(onBoard);
+    p.finally(() => listeners.delete(onBoard)).catch(() => {});
+  }
+  return p;
 }
 
-/** Current snapshot without triggering a fetch (used to flag closed jobs on saved results). */
+/** Current snapshot without triggering a fetch. */
 export function peekJobs(): Snapshot | null {
   return snapshot;
 }
@@ -153,8 +116,8 @@ export function peekJobs(): Snapshot | null {
 /** Forces a refetch and reports what changed. Safe to call from a scheduler. */
 export async function refreshJobs() {
   const before = snapshot;
-  const after = await getJobs(true);
-  const added = before ? after.jobs.filter((j) => !before.byId.has(j.id)).length : after.jobs.length;
-  const closed = before ? before.jobs.filter((j) => !after.byId.has(j.id)).length : 0;
-  return { total: after.jobs.length, added, closed, boards: after.boards, fetchedAt: new Date(after.fetchedAt).toISOString() };
+  const after = await getJobs({ force: true });
+  const added = before ? after.jobs.filter((j) => !before.byId.has(j.id)) : [];
+  const closed = before ? before.jobs.filter((j) => !after.byId.has(j.id)) : [];
+  return { before, after, added, closed };
 }

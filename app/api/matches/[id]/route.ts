@@ -19,7 +19,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/matches/[id]">) 
     // Current snapshot (cheap inside its TTL, single-flight on a cold start); fall back to whatever is in memory.
     const snapshot = await getJobs().catch(() => peekJobs());
     const closedJobIds = snapshot
-      ? [...result.matches, ...result.nearMisses].map((m) => m.job.id).filter((jobId) => !snapshot.byId.has(jobId))
+      ? result.matches.map((m) => m.job.id).filter((jobId) => !snapshot.byId.has(jobId))
       : [];
     const res = ok({ ...result, closedJobIds, closedChecked: Boolean(snapshot) });
     res.headers.set("cache-control", "private, no-store"); // resume-derived data: never in shared caches

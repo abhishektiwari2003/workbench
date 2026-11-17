@@ -102,6 +102,15 @@ A: It's a funnel. Haiku turns the resume into a compact profile, for less than a
 **Q: What does it cost per candidate?**
 A: I measure it on every request, and it's shown in the UI. About 6 cents: roughly 15k input tokens and 3.5k output tokens, almost all of it the four Sonnet calls. Running the same resume again costs zero because of the response cache. At 100k candidates a month that's about $6k, and SCALE.md shows how job digests cut that roughly in half.
 
+**Q: Why two models for scoring?**
+A: Haiku is twenty times cheaper than Sonnet, so it scores all 40 shortlisted jobs with sub-scores for skills, seniority and domain. Sonnet then explains and re-scores only the best ten, which are the cards a user actually reads. That doubled the jobs we judge and cut cost from 6 cents to about 3.4 cents per candidate. The quality panel checks that the cheap stage isn't throwing good jobs away.
+
+**Q: How do you make sure the user never sees an empty page?**
+A: Strong is 70 and up, Good is 55 to 69, and Strong always comes first. If nothing reaches 55, we still explain the top three and label them "Closest available", with honest gaps. Only a resume that shares no title or skill with any of the 3,300 jobs gets an empty result, and it gets an explanation instead.
+
+**Q: How is location handled for someone in India?**
+A: Every job is normalised to countries and regions in code. Ashby gives a structured workplace type, which we trust; its `isRemote` flag is true for hybrid roles, so we ignore that one. Greenhouse has no workplace field, so we only say remote or hybrid when the posting says so and never guess on-site. Then a deterministic location fit ranks same-country and remote-anywhere roles above on-site roles abroad, and the models see that verdict instead of guessing geography.
+
 **Q: Why not just embed everything and do vector search?**
 A: It would work, but for 3,300 jobs keyword and title scoring is free, instant and explainable, and it got good shortlists in testing. Embeddings are the next step when the job pool grows to hundreds of thousands, or if prefilter recall turns out weak.
 
@@ -173,6 +182,10 @@ A: Accounts, a database, DOCX/OCR parsing, a feedback loop and email alerts for 
 | 15 | Review: match quality | Manager-level bug fixed (diff 1.5 scored as 0.1); skills grounded in the resume; partial scoring reported as `stats.unscored`; prompt tags neutralised; board URLs must be https |
 | 16 | Review: performance | Skill regexes compiled once per request; lowercased job text cached per snapshot; snapshot served stale-while-revalidate. Measured prefilter: ~70ms on real data (the docs had said 10ms) |
 | 17 | Review: UI and accessibility | Skeleton replaces the stale result during a re-run; scroll to results on submit; 700-shade score text; closed roles get a badge and strike-through instead of opacity; upload status in a live region; sr-only score text; header moved out of `<main>`; errors announced once; copy built from shared constants |
+| 18 | Upgrade phase 1: two-stage pipeline | Haiku scores a 40-job shortlist (4×10) with skill/seniority/domain sub-scores; Sonnet explains and re-scores the best ≤10 (2×5). Measured $0.034/candidate (was $0.06) with twice the jobs judged. Tiers: Strong ≥70, Good 55–69, honest "Closest" when nothing qualifies |
+| 19 | Upgrade phase 1: honest cost | Response-cache entries keep their original usage; whole results cached per resume + job snapshot + feedback state. Every result shows "Cost to compute" and, on a hit, "Served from cache · $0 spent" (verified: repeat in 15ms, $0.0364 compute, $0 spent) |
+| 20 | Upgrade phase 1: location | `lib/location.ts` normalises locations to countries/regions. Workplace comes from Ashby's structured `workplaceType` (its `isRemote` is true even for Hybrid, so the old "Remote friendly" label was wrong). Greenhouse has no such field, so we never guess "On-site". India test resume: every match India-based or remote-anywhere |
+| 21 | Upgrade phase 1: profile + boards | `country` added; target titles checked against years of experience in code (no Staff titles under 8 years). Board failures shown per board; verified with `SIMULATE_BOARD_FAILURE=linear` (9 boards matched, Linear listed as missing). Duplicate re-posts (same company + title) collapsed before scoring |
 
 **Where the AI got it wrong and how it was caught:**
 - The scaffold commands assumed `cp -n` exits 0. I caught it because the build listing still showed `scaffold-tmp` and AGENTS.md, and the package name hadn't changed.
