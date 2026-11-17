@@ -1,0 +1,47 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Next.js build output
+/.next/
+/out/
+/build
+next-env.d.ts
+*.tsbuildinfo
+
+# testing
+/coverage
+
+# env files: never commit secrets, but keep the template
+.env*
+!.env.example
+
+# local database (if Prisma + SQLite is used)
+*.db
+*.db-journal
+/prisma/dev.db*
+
+# Claude Code: commit agents and commands, not personal settings
+.claude/settings.local.json
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS and editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# misc
+*.pem
+/scaffold-tmp
