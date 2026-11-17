@@ -4,23 +4,26 @@ import { generateJSON } from "../llm";
 import type { Ranked } from "../prefilter";
 import { EXPLAIN_SYSTEM, FAST_SCORE_SYSTEM, jobsInput } from "../prompts";
 import { coversIds, ExplainSchema, FastScoreSchema, type Explained, type FastScore, type Profile } from "../schemas";
+import type { Digest } from "../digests";
 import { runBatches } from "./batch";
 
 const FAST_BATCH = 10;
 const EXPLAIN_BATCH = 5;
 const FAST_EXCERPT = 1_200;
 const EXPLAIN_EXCERPT = 1_400;
+const FAST_WITH_DIGEST = 400; // with a digest, a shorter raw excerpt is enough
+const EXPLAIN_WITH_DIGEST = 700;
 
-type Ctx = { profile: Profile; meter: CostMeter; signal: AbortSignal };
+type Ctx = { profile: Profile; meter: CostMeter; signal: AbortSignal; digests?: Map<string, Digest> };
 
-export async function fastScore(ranked: Ranked[], { profile, meter, signal }: Ctx, onBatch: (n: number) => void) {
+export async function fastScore(ranked: Ranked[], { profile, meter, signal, digests }: Ctx, onBatch: (n: number) => void) {
   const { results, failed } = await runBatches(
     ranked,
     FAST_BATCH,
     (batch) =>
       generateJSON({
         system: FAST_SCORE_SYSTEM,
-        input: jobsInput(profile, batch, FAST_EXCERPT),
+        input: jobsInput(profile, batch, FAST_EXCERPT, digests, FAST_WITH_DIGEST),
         schema: coversIds(FastScoreSchema, batch.map((r) => r.job.id)),
         model: "fast",
         effort: "low",
@@ -29,7 +32,7 @@ export async function fastScore(ranked: Ranked[], { profile, meter, signal }: Ct
         onUsage: meter.for("score"),
         signal,
       }),
-    (batch) => onBatch(batch.length),
+    { onDone: (batch) => onBatch(batch.length) },
   );
   const ids = new Set(ranked.map((r) => r.job.id));
   const scores = new Map<string, FastScore>();
@@ -37,14 +40,14 @@ export async function fastScore(ranked: Ranked[], { profile, meter, signal }: Ct
   return { scores, failed };
 }
 
-export async function explain(ranked: Ranked[], { profile, meter, signal }: Ctx, onBatch: (n: number) => void) {
+export async function explain(ranked: Ranked[], { profile, meter, signal, digests }: Ctx, onBatch: (n: number) => void) {
   const { results } = await runBatches(
     ranked,
     EXPLAIN_BATCH,
     (batch) =>
       generateJSON({
         system: EXPLAIN_SYSTEM,
-        input: jobsInput(profile, batch, EXPLAIN_EXCERPT),
+        input: jobsInput(profile, batch, EXPLAIN_EXCERPT, digests, EXPLAIN_WITH_DIGEST),
         schema: coversIds(ExplainSchema, batch.map((r) => r.job.id)),
         model: "smart",
         effort: "low",
@@ -53,7 +56,7 @@ export async function explain(ranked: Ranked[], { profile, meter, signal }: Ctx,
         onUsage: meter.for("explain"),
         signal,
       }),
-    (batch) => onBatch(batch.length),
+    { onDone: (batch) => onBatch(batch.length) },
   );
   const ids = new Set(ranked.map((r) => r.job.id));
   const explained = new Map<string, Explained>();

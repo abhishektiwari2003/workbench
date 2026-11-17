@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { callApi } from "@/lib/client-api";
+import type { ScoredJob } from "@/lib/types";
 import type { RunSummary } from "@/lib/users";
 
 export type Me = {
@@ -10,6 +11,7 @@ export type Me = {
   newJobsSinceLastVisit: number | null;
   previousVisitAt: string | null;
   votes: Record<string, 1 | -1>;
+  newMatches: ScoredJob[];
 };
 
 /** The signed-in user's history, quota, visit info and votes. `reload` after a run or a vote. */

@@ -51,6 +51,8 @@ type GenerateJSONOptions<T> = {
   label?: string;
   /** Thinking depth. Lower = fewer (billed) output tokens. Model default when omitted. */
   effort?: "low" | "medium" | "high";
+  /** "disabled" turns thinking off for simple extraction (fast tier only: Haiku 5.5 accepts it at effort <= high). */
+  thinking?: "disabled";
   /** Called per API call, and per original call when served from cache (with cached: true). */
   onUsage?: (usage: LLMUsage) => void;
   /** Aborts the call (and any queued wait), e.g. an overall request deadline. */
@@ -70,6 +72,7 @@ export async function generateJSON<T>({
   useCache = true,
   label = "llm",
   effort,
+  thinking,
   onUsage,
   signal,
 }: GenerateJSONOptions<T>): Promise<T> {
@@ -116,6 +119,7 @@ export async function generateJSON<T>({
               system: [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }],
               messages: [{ role: "user", content: userContent }],
               ...(effort ? { output_config: { effort } } : {}),
+              ...(thinking === "disabled" ? { thinking: { type: "disabled" as const } } : {}),
             },
             { signal },
           ),

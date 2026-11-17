@@ -1,6 +1,6 @@
 // Per-user state, in memory and keyed by Clerk userId: run history, visits, votes, daily quota.
 // Production: a `users` + `runs` + `votes` table in Postgres (see docs/SCALE.md section 7).
-import type { MatchResult } from "./types";
+import type { MatchResult, ScoredJob } from "./types";
 import { singleton } from "./singleton";
 
 export const DAILY_RUNS = 5; // fresh (paid) searches per user per day; cache hits are free
@@ -25,6 +25,7 @@ type UserState = {
   previousVisitAt: number | null; // start of the visit before this one
   votes: Map<string, Vote>;
   quota: { day: string; used: number };
+  newMatches: ScoredJob[]; // found by scheduled refreshes since the user's last search
 };
 
 const users = singleton("users", () => new Map<string, UserState>());
@@ -33,10 +34,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 function state(userId: string): UserState {
   let s = users.get(userId);
   if (!s) {
-    s = { runs: [], lastSeenAt: null, previousVisitAt: null, votes: new Map(), quota: { day: today(), used: 0 } };
+    s = { runs: [], lastSeenAt: null, previousVisitAt: null, votes: new Map(), quota: { day: today(), used: 0 }, newMatches: [] };
     users.set(userId, s);
   }
   if (s.quota.day !== today()) s.quota = { day: today(), used: 0 };
+  s.newMatches ??= []; // records created by an older build of this module (dev reloads keep state)
   return s;
 }
 
@@ -47,6 +49,7 @@ export function quotaOf(userId: string) {
 
 export function recordRun(userId: string, r: MatchResult) {
   const s = state(userId);
+  s.newMatches = s.newMatches.filter((m) => !r.matches.some((x) => x.job.id === m.job.id)); // now part of a full result
   if (!r.servedFromCache) s.quota.used += 1;
   s.runs.unshift({
     id: r.id,
@@ -87,4 +90,16 @@ export function votesOf(userId: string): Map<string, Vote> {
 /** All users with a stored run, for the scheduled refresh. */
 export function allUsers(): { userId: string; latestRunId: string | undefined }[] {
   return [...users.entries()].map(([userId, s]) => ({ userId, latestRunId: s.runs.find((r) => !r.cached)?.id ?? s.runs[0]?.id }));
+}
+
+const MAX_NEW = 20;
+
+export function addNewMatches(userId: string, matches: ScoredJob[]) {
+  const s = state(userId);
+  const seen = new Set(s.newMatches.map((m) => m.job.id));
+  s.newMatches = [...matches.filter((m) => !seen.has(m.job.id)), ...s.newMatches].slice(0, MAX_NEW);
+}
+
+export function newMatchesOf(userId: string): ScoredJob[] {
+  return state(userId).newMatches;
 }

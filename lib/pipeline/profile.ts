@@ -47,6 +47,7 @@ export async function buildProfile(resumeText: string, meter: CostMeter, signal:
     schema: ProfileSchema,
     model: "fast",
     effort: "low",
+    thinking: "disabled", // structured extraction on the critical path: no reasoning needed, saves ~1s
     maxTokens: 1_200,
     label: "resume-profile",
     onUsage: meter.for("profile"),

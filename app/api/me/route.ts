@@ -1,10 +1,10 @@
-// GET /api/me -> { runs, quota, newJobsSinceLastVisit, previousVisitAt, votes }
+// GET /api/me -> { runs, quota, newJobsSinceLastVisit, previousVisitAt, votes, newMatches }
 // "New since your last visit" counts postings published after the previous visit started.
 import { handleError, ok } from "@/lib/api";
 import { requireUser, userKey } from "@/lib/auth";
 import { getJobs } from "@/lib/boards";
 import { LIMITS, limitOr429 } from "@/lib/rate-limit";
-import { history, quotaOf, touchVisit, votesOf } from "@/lib/users";
+import { history, newMatchesOf, quotaOf, touchVisit, votesOf } from "@/lib/users";
 
 export async function GET() {
   try {
@@ -21,6 +21,7 @@ export async function GET() {
       newJobsSinceLastVisit,
       previousVisitAt: previousVisitAt ? new Date(previousVisitAt).toISOString() : null,
       votes: Object.fromEntries([...votesOf(userId)].map(([id, v]) => [id, v.vote])),
+      newMatches: newMatchesOf(userId),
     });
     res.headers.set("cache-control", "private, no-store");
     return res;

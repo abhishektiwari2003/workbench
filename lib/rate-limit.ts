@@ -14,6 +14,8 @@ export const LIMITS = {
   copilot: 20, // fast-tier, ~$0.001 each
   simulate: 60, // free, deterministic
   feedback: 60,
+  quality: 10, // smart tier, ~$0.015 each
+  ops: 60,
 } as const;
 
 const MAX_KEYS = 10_000;

@@ -2,7 +2,10 @@
 // The prompts sit below the minimum cacheable prefix, so savings come from the response cache, not prompt caching.
 import type { Ranked } from "./prefilter";
 import type { Profile } from "./schemas";
-import { descriptionExcerpt } from "./text";
+import { descriptionExcerpt, neutralise } from "./text";
+
+export { neutralise };
+import { digestText, type Digest } from "./digests";
 
 export const PROFILE_SYSTEM = `You read a candidate's resume and extract a compact job-search profile.
 The resume may be in any language; write the profile in English.
@@ -59,10 +62,6 @@ For every job return:
 Return JSON: {"results":[{"id": string, "score": number, "reasons": string[], "gaps": string[]}]}
 Include every job id you were given, exactly once, ids copied exactly.`;
 
-/** Board and resume text must not be able to close our <job>/<candidate> wrappers (prompt injection). */
-export function neutralise(s: string): string {
-  return s.replace(/<(\/?)(job|candidate|user_input)/gi, "&lt;$1$2");
-}
 
 /** Only the fields that matter for fit: keeps every scoring call small. */
 export function profileForScoring(p: Profile): string {
@@ -80,18 +79,23 @@ export function profileForScoring(p: Profile): string {
   );
 }
 
-/** Job blocks with the deterministic location verdict included, so the model never guesses geography. */
-export function jobsInput(profile: Profile, ranked: Ranked[], excerptChars: number): string {
-  const blocks = ranked.map(({ job: j, locationFit }) =>
-    [
+/**
+ * Job blocks with the deterministic location verdict included, so the model never guesses geography.
+ * With a cached digest, the block carries the condensed requirements plus a shorter excerpt (fewer tokens).
+ */
+export function jobsInput(profile: Profile, ranked: Ranked[], excerptChars: number, digests?: Map<string, Digest>, digestExcerptChars = 500): string {
+  const blocks = ranked.map(({ job: j, locationFit }) => {
+    const digest = digests?.get(j.id);
+    return [
       `<job id="${j.id}">`,
       neutralise(`Title: ${j.title}`),
       neutralise(`Company: ${j.company}${j.department ? ` / ${j.department}` : ""}`),
       neutralise(`Location: ${j.location}`),
       `Location fit for this candidate: ${locationFit.label} (${Math.round(locationFit.score * 100)}/100)`,
-      neutralise(descriptionExcerpt(j.description, excerptChars)),
+      ...(digest ? [digestText(digest)] : []),
+      neutralise(descriptionExcerpt(j.description, digest ? digestExcerptChars : excerptChars)),
       `</job>`,
-    ].join("\n"),
-  );
+    ].join("\n");
+  });
   return `<candidate>\n${profileForScoring(profile)}\n</candidate>\n\n${blocks.join("\n\n")}`;
 }

@@ -15,10 +15,14 @@ export type SimulateRequest = z.infer<typeof SimulateRequestSchema>;
  * The bar is the lowest prefilter score among jobs that became Strong/Good matches this run (or the
  * shortlist cut-off if none did). Jobs that newly clear it would qualify for AI review.
  */
-export function simulate(ctx: RunContext, result: MatchResult, jobs: Job[], req: SimulateRequest) {
+export function qualifyingBar(ctx: RunContext, result: MatchResult): number {
   const prefilterOf = new Map(ctx.ranked.map((r) => [r.job.id, r.prefilter]));
   const qualified = result.matches.filter((m) => m.tier !== "closest").map((m) => prefilterOf.get(m.job.id) ?? Infinity);
-  const bar = qualified.length ? Math.min(...qualified) : (ctx.ranked.at(-1)?.prefilter ?? 0);
+  return qualified.length ? Math.min(...qualified) : (ctx.ranked.at(-1)?.prefilter ?? 0);
+}
+
+export function simulate(ctx: RunContext, result: MatchResult, jobs: Job[], req: SimulateRequest) {
+  const bar = qualifyingBar(ctx, result);
 
   const lower = (xs: string[]) => new Set(xs.map((x) => x.toLowerCase()));
   const haveSkills = lower(ctx.profile.skills);

@@ -10,6 +10,7 @@ export type FunnelState = {
   totalUsd: number;
   cached: boolean;
   finished: boolean;
+  digests: { cached: number; computed: number } | null;
 };
 
 export const initialFunnel = (): FunnelState => ({
@@ -24,6 +25,7 @@ export const initialFunnel = (): FunnelState => ({
   totalUsd: 0,
   cached: false,
   finished: false,
+  digests: null,
 });
 
 export function funnelReducer(state: FunnelState, e: PipelineEvent | { type: "reset" }): FunnelState {
@@ -32,6 +34,8 @@ export function funnelReducer(state: FunnelState, e: PipelineEvent | { type: "re
       return initialFunnel();
     case "cached":
       return { ...state, cached: true };
+    case "digest":
+      return { ...state, digests: { cached: e.cached, computed: e.computed } };
     case "board":
       return { ...state, boards: { ...state.boards, [e.board.company]: e.board } };
     case "stage":

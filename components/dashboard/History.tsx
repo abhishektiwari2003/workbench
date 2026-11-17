@@ -7,7 +7,7 @@ const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "
 /** Quota, "new since your last visit", and the user's past runs (each reopens its saved result). */
 export default function History({ me, currentId, onOpen }: { me: Me | null; currentId: string | null; onOpen: (id: string) => void }) {
   if (!me) return <div className="h-12 animate-pulse rounded-2xl bg-zinc-50" aria-hidden />;
-  const { quota, runs, newJobsSinceLastVisit } = me;
+  const { quota, runs, newJobsSinceLastVisit, newMatches } = me;
   return (
     <section aria-label="Your searches" className="space-y-3">
       {newJobsSinceLastVisit !== null && newJobsSinceLastVisit > 0 && (
@@ -15,6 +15,26 @@ export default function History({ me, currentId, onOpen }: { me: Me | null; curr
           <span className="font-semibold">{newJobsSinceLastVisit} new jobs</span> posted since your last visit. Run your search again to see
           which fit.
         </p>
+      )}
+      {newMatches.length > 0 && (
+        <div className="rounded-2xl border border-emerald-600/20 bg-emerald-50/60 px-6 py-4 text-sm">
+          <p className="font-semibold">
+            {newMatches.length} new {newMatches.length === 1 ? "match" : "matches"} from the latest job refresh
+          </p>
+          <ul className="mt-2 space-y-1">
+            {newMatches.slice(0, 5).map((m) => (
+              <li key={m.job.id} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0">
+                  <span className="font-semibold tabular-nums text-emerald-700">{m.score}</span> {m.job.company} · {m.job.title}{" "}
+                  <span className="text-zinc-500">· {m.locationFit.label}</span>
+                </span>
+                <a href={m.job.url} target="_blank" rel="noopener noreferrer" className="rounded font-semibold text-indigo-600 hover:text-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600">
+                  Apply<span className="sr-only"> to {m.job.title} (opens in a new tab)</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <details className="group rounded-2xl border border-zinc-200 bg-zinc-50 px-6 py-3">
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 rounded-lg text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600">

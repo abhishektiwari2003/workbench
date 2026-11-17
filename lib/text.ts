@@ -63,3 +63,8 @@ export function descriptionExcerpt(text: string, max: number): string {
   const slice = text.slice(start, start + max);
   return slice.length < text.length - start ? `${slice}...` : slice;
 }
+
+/** Board and resume text must not be able to close our <job>/<candidate> wrappers (prompt injection). */
+export function neutralise(s: string): string {
+  return s.replace(/<(\/?)(job|candidate|user_input)/gi, "&lt;$1$2");
+}

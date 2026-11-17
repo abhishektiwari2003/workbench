@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { getJobs, peekJobs } from "../boards";
 import { CostMeter } from "../cost";
+import { digestInBackground, warmDigests } from "../digests";
 import { recordCache, recordCandidate } from "../metrics";
 import { shortlist } from "../prefilter";
 import { getCached, resultKey, setCached } from "../result-cache";
@@ -62,17 +63,23 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
   const ranked = shortlist(profile, snapshot.jobs, SHORTLIST_SIZE, opts.nudge);
   emitStage("prefiltered", ranked.length, true);
 
-  const ctx = { profile, meter, signal };
+  // Shared job digests: use the ones already cached; digest the rest in the background (platform cost,
+  // no added latency) so every later candidate with an overlapping shortlist gets them free.
+  const jobs = ranked.map((r) => r.job);
+  const warm = warmDigests(jobs);
+  const scheduled = digestInBackground(jobs);
+  channel.emit({ type: "digest", cached: warm.size, computed: scheduled });
+
   let scoredCount = 0;
   const { scores: fast } = ranked.length
-    ? await fastScore(ranked, ctx, (n) => emitStage("scored", (scoredCount += n), false))
+    ? await fastScore(ranked, { profile, meter, signal, digests: warm }, (n) => emitStage("scored", (scoredCount += n), false))
     : { scores: new Map() };
   emitStage("scored", fast.size, true);
 
   const toExplain = pickForExplain(ranked, fast);
   let explainedCount = 0;
   const explained = toExplain.length
-    ? await explain(toExplain, ctx, (n) => emitStage("explained", (explainedCount += n), false))
+    ? await explain(toExplain, { profile, meter, signal, digests: warm }, (n) => emitStage("explained", (explainedCount += n), false))
     : new Map();
   emitStage("explained", explained.size, true);
 
@@ -94,6 +101,7 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
     },
     stats: { jobsScanned: snapshot.jobs.length, boards: snapshot.boards, unscored: ranked.length - fast.size, ms: Date.now() - started },
     funnel: { scanned: snapshot.jobs.length, prefiltered: ranked.length, scored: fast.size, explained: explained.size },
+    digests: { cached: warm.size, computed: scheduled },
     matches: assignTiers(scored, tieBreak),
     cost: meter.total(),
     feedbackCount: opts.feedbackCount ?? 0,
@@ -123,7 +131,7 @@ export async function runMatch(resumeText: string, opts: RunOptions = {}): Promi
       cost: { ...hit.result.cost, spentUsd: 0 },
     };
     saveResult(result, hit.context, ownerId);
-    recordCandidate(result.cost.computeUsd, 0, true);
+    recordCandidate(result);
     opts.emit?.({ type: "result", result });
     return result;
   }
@@ -136,7 +144,7 @@ export async function runMatch(resumeText: string, opts: RunOptions = {}): Promi
       .then(({ result, context }) => {
         setCached(key, { result, events: [...channel.events], context, snapshotAt: context.snapshotAt });
         saveResult(result, context, ownerId);
-        recordCandidate(result.cost.computeUsd, result.cost.spentUsd, false);
+        recordCandidate(result);
         channel.emit({ type: "result", result });
         return { result, context };
       })

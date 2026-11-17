@@ -74,7 +74,9 @@ export default function Funnel({ state }: { state: FunnelState }) {
             <li key={r.key} className="grid grid-cols-[6.5rem_1fr_auto] items-center gap-3 text-sm sm:grid-cols-[9rem_1fr_7rem]">
               <span>
                 <span className="font-semibold">{r.label}</span>
-                <span className="block text-zinc-500">{r.detail}</span>
+                <span className="block text-zinc-500">
+                  {r.key === "scored" && state.digests ? `Haiku · ${state.digests.cached} of ${state.stages.prefiltered.count} job digests shared` : r.detail}
+                </span>
               </span>
               <span className="block h-2.5" style={{ width: r.width, marginInline: "auto" }} aria-hidden>
                 <span className="block h-full overflow-hidden rounded-full bg-zinc-100">

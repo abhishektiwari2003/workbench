@@ -6,6 +6,7 @@ import { GOOD_SCORE, STRONG_SCORE } from "@/lib/schemas";
 import type { MatchResult, ScoredJob, Tier } from "@/lib/types";
 import CoachPanel from "./copilot/CoachPanel";
 import JobActions from "./copilot/JobActions";
+import QualityPanel from "./copilot/QualityPanel";
 import FeedbackButtons from "./dashboard/FeedbackButtons";
 import JobCard from "./JobCard";
 import { COMPARE_MAX, CompareBar, CompareDialog } from "./results/Compare";
@@ -84,6 +85,7 @@ export default function Results({ result, closedIds, restored, onRerun, votes, o
       <ResultSummary result={result} />
 
       {result.matches.length > 0 && <CoachPanel key={result.id} resultId={result.id} shownIds={new Set(result.matches.map((m) => m.job.id))} />}
+      {result.matches.length > 0 && <QualityPanel key={`q-${result.id}`} resultId={result.id} />}
 
       {result.matches.length === 0 ? (
         <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm">

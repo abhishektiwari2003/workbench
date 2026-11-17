@@ -70,12 +70,14 @@ export type MatchResult = {
   matches: ScoredJob[]; // ordered: strong, then good (or closest when nothing qualifies)
   cost: MatchCost;
   feedbackCount?: number; // ratings that nudged this ranking
+  digests?: { cached: number; computed: number }; // shared job-digest cache use for this run
 };
 
 /** Progress events streamed to the browser while a match runs. */
 export type PipelineEvent =
   | { type: "cached"; computedAt: string } // replaying a stored run: nothing is being spent
   | { type: "board"; board: BoardStatus }
+  | { type: "digest"; cached: number; computed: number } // shared job-level cache hits for the shortlist
   | { type: "stage"; stage: keyof Funnel; count: number; done: boolean }
   | { type: "cost"; stage: Stage; stageUsd: number; totalUsd: number; cached: boolean }
   | { type: "result"; result: MatchResult }
