@@ -1,6 +1,7 @@
 // Runtime plumbing for lib/llm.ts: errors, concurrency limit, response cache, JSON extraction, logging.
 import Anthropic from "@anthropic-ai/sdk";
 import type { Usage } from "./pricing";
+import { singleton } from "./singleton";
 
 export type LLMErrorKind = "config" | "timeout" | "rate_limit" | "overloaded" | "api" | "parse";
 
@@ -71,7 +72,7 @@ export async function withSlot<T>(fn: () => Promise<T>, signal?: AbortSignal): P
 const CACHE_TTL_MS = Number(process.env.LLM_CACHE_TTL_MS ?? 30 * 60_000);
 const CACHE_MAX_ENTRIES = 2_000;
 type Entry = { value: unknown; usage: Usage[]; expires: number };
-const cache = new Map<string, Entry>();
+const cache = singleton("llm-cache", () => new Map<string, Entry>());
 
 export function cacheGet(key: string): Entry | undefined {
   const hit = cache.get(key);

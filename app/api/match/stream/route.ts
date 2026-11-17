@@ -1,21 +1,17 @@
 // POST /api/match/stream  { resumeText } -> text/event-stream of PipelineEvent (board, stage, cost, result | error)
-// Same pipeline, limits and validation as POST /api/match; progress streams live for the funnel UI.
-import { fail, parseBody } from "@/lib/api";
+// Same front door and pipeline as POST /api/match; progress streams live for the funnel UI.
+import { prepareMatch } from "@/lib/match-request";
 import { runMatch } from "@/lib/pipeline/run";
-import { clientKey, LIMITS, limitOr429, rateLimit } from "@/lib/rate-limit";
-import { MatchRequestSchema } from "@/lib/schemas";
 import { sseResponse } from "@/lib/sse";
+import { recordRun } from "@/lib/users";
 
 export const maxDuration = 60; // the pipeline has its own 45s deadline
 
 export async function POST(req: Request) {
-  const limited = limitOr429(clientKey(req, "match"), LIMITS.match, "You've run several searches in a row.");
-  if (limited) return limited;
-  if (!rateLimit("match:global", LIMITS.matchGlobal).allowed) {
-    return fail(503, "busy", "We're handling a lot of searches right now. Please try again in a minute.");
-  }
-  const { data, error } = await parseBody(req, MatchRequestSchema);
-  if (error) return error;
-
-  return sseResponse((send) => runMatch(data.resumeText, { emit: send }));
+  const p = await prepareMatch(req);
+  if (p.error) return p.error;
+  return sseResponse(async (send) => {
+    const result = await runMatch(p.resumeText, { ...p.opts, emit: send });
+    recordRun(p.userId, result);
+  });
 }

@@ -1,21 +1,23 @@
 // Fixed-window in-memory rate limiter. Per instance only:
 // in production, back it with Redis (e.g. Upstash) using the same interface.
 import { fail } from "./api";
+import { singleton } from "./singleton";
 
 /** Requests per minute. One place, so a new route can't silently pick its own number. */
 export const LIMITS = {
-  match: 10, // per IP; 5 LLM calls (~$0.06) each
-  matchGlobal: 60, // per instance, all IPs: hard ceiling on LLM spend even if IPs are spoofed
+  match: 10, // per user; ~7 LLM calls (~$0.035) each
+  matchGlobal: 60, // per instance, all users: hard ceiling on LLM spend
   resume: 20,
   jobs: 60,
   jobsRefresh: 2,
   matchesGet: 60,
   copilot: 20, // fast-tier, ~$0.001 each
   simulate: 60, // free, deterministic
+  feedback: 60,
 } as const;
 
 const MAX_KEYS = 10_000;
-const windows = new Map<string, { count: number; resetAt: number }>();
+const windows = singleton("rate-limit", () => new Map<string, { count: number; resetAt: number }>());
 
 function sweep(now: number) {
   for (const [key, entry] of windows) if (entry.resetAt <= now) windows.delete(key);

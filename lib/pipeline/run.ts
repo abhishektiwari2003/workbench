@@ -36,8 +36,14 @@ export type RunOptions = {
   emit?: (e: PipelineEvent) => void;
   prefsKey?: string; // changes when the user's feedback changes, so cached rankings don't go stale
   nudge?: (job: Job) => number; // per-user ranking nudge from thumbs up/down
+  feedbackCount?: number; // how many ratings shaped this ranking (shown to the user)
   ownerId?: string | null;
 };
+
+/** Would this resume be served from the result cache right now (free, doesn't count against quota)? */
+export function isCachedRun(resumeText: string, prefsKey = ""): boolean {
+  return Boolean(getCached(resultKey(resumeText, prefsKey), peekJobs()?.fetchedAt));
+}
 
 async function compute(resumeText: string, channel: RunChannel, opts: RunOptions) {
   const started = Date.now();
@@ -90,12 +96,14 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
     funnel: { scanned: snapshot.jobs.length, prefiltered: ranked.length, scored: fast.size, explained: explained.size },
     matches: assignTiers(scored, tieBreak),
     cost: meter.total(),
+    feedbackCount: opts.feedbackCount ?? 0,
   };
   const context: RunContext = { resumeText, profile, ranked, fast, snapshotAt: snapshot.fetchedAt };
   return { result, context };
 }
 
-const inflight = new Map<string, { channel: RunChannel; promise: Promise<MatchResult> }>();
+type Inflight = { channel: RunChannel; promise: Promise<{ result: MatchResult; context: RunContext }>; ownerId: string | null };
+const inflight = new Map<string, Inflight>();
 
 export async function runMatch(resumeText: string, opts: RunOptions = {}): Promise<MatchResult> {
   const key = resultKey(resumeText, opts.prefsKey ?? "");
@@ -130,15 +138,21 @@ export async function runMatch(resumeText: string, opts: RunOptions = {}): Promi
         saveResult(result, context, ownerId);
         recordCandidate(result.cost.computeUsd, result.cost.spentUsd, false);
         channel.emit({ type: "result", result });
-        return result;
+        return { result, context };
       })
       .finally(() => inflight.delete(key));
-    run = { channel, promise };
+    run = { channel, promise, ownerId };
     inflight.set(key, run);
   }
-  const unsubscribe = opts.emit ? run.channel.subscribe(opts.emit) : undefined;
+  const joined = run.ownerId !== ownerId; // another user's identical run: share the work, not the result id
+  const unsubscribe = opts.emit ? run.channel.subscribe(joined ? (e) => e.type !== "result" && opts.emit!(e) : opts.emit) : undefined;
   try {
-    return await run.promise;
+    const { result, context } = await run.promise;
+    if (!joined) return result;
+    const own: MatchResult = { ...result, id: randomUUID(), cost: { ...result.cost, spentUsd: 0 }, servedFromCache: true };
+    saveResult(own, context, ownerId);
+    opts.emit?.({ type: "result", result: own });
+    return own;
   } finally {
     unsubscribe?.();
   }

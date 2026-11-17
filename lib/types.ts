@@ -69,6 +69,7 @@ export type MatchResult = {
   funnel: Funnel;
   matches: ScoredJob[]; // ordered: strong, then good (or closest when nothing qualifies)
   cost: MatchCost;
+  feedbackCount?: number; // ratings that nudged this ranking
 };
 
 /** Progress events streamed to the browser while a match runs. */

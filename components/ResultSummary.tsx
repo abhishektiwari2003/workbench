@@ -26,6 +26,7 @@ export default function ResultSummary({ result }: { result: MatchResult }) {
       <p className="mt-1 text-sm text-zinc-500">
         {funnel.scanned.toLocaleString()} roles scanned · {funnel.prefiltered} pre-filtered · {funnel.scored} scored · {funnel.explained}{" "}
         explained · {(stats.ms / 1000).toFixed(1)}s
+        {result.feedbackCount ? ` · ranked with your ${result.feedbackCount} ${result.feedbackCount === 1 ? "rating" : "ratings"}` : ""}
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">

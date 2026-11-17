@@ -8,6 +8,7 @@ import { recordBoard } from "./metrics";
 import type { BoardStatus, Job } from "./types";
 
 import { BOARDS, type Board } from "./board-list";
+import { singleton } from "./singleton";
 
 export { BOARDS };
 
@@ -36,10 +37,12 @@ async function fetchBoard(b: Board): Promise<Job[]> {
 
 export type Snapshot = { jobs: Job[]; byId: Map<string, Job>; boards: BoardStatus[]; fetchedAt: number };
 
-let snapshot: Snapshot | null = null;
-let inflight: Promise<Snapshot> | null = null;
-let progress: BoardStatus[] = []; // boards settled so far in the in-flight load
-const listeners = new Set<(b: BoardStatus) => void>();
+const state = singleton("boards", () => ({
+  snapshot: null as Snapshot | null,
+  inflight: null as Promise<Snapshot> | null,
+  progress: [] as BoardStatus[], // boards settled so far in the in-flight load
+  listeners: new Set<(b: BoardStatus) => void>(),
+}));
 
 async function loadBoard(b: Board, previous: Snapshot | null): Promise<{ status: BoardStatus; jobs: Job[] }> {
   const started = Date.now();
@@ -53,14 +56,14 @@ async function loadBoard(b: Board, previous: Snapshot | null): Promise<{ status:
     const kept = previous?.jobs.filter((j) => j.company === b.company) ?? [];
     out = { status: { company: b.company, ok: false, count: kept.length, ms: Date.now() - started, stale: kept.length > 0 }, jobs: kept };
   }
-  progress.push(out.status);
+  state.progress.push(out.status);
   recordBoard(out.status);
-  for (const l of listeners) l(out.status);
+  for (const l of state.listeners) l(out.status);
   return out;
 }
 
 async function loadAll(previous: Snapshot | null): Promise<Snapshot> {
-  progress = [];
+  state.progress = [];
   const loaded = await Promise.all(BOARDS.map((b) => loadBoard(b, previous)));
   const jobs = loaded.flatMap((l) => l.jobs);
   if (jobs.length === 0) {
@@ -70,10 +73,10 @@ async function loadAll(previous: Snapshot | null): Promise<Snapshot> {
 }
 
 function load(): Promise<Snapshot> {
-  inflight ??= loadAll(snapshot)
-    .then((s) => (snapshot = s))
-    .finally(() => (inflight = null));
-  return inflight;
+  state.inflight ??= loadAll(state.snapshot)
+    .then((s) => (state.snapshot = s))
+    .finally(() => (state.inflight = null));
+  return state.inflight;
 }
 
 /**
@@ -83,28 +86,29 @@ function load(): Promise<Snapshot> {
  */
 export async function getJobs(opts: { force?: boolean; onBoard?: (b: BoardStatus) => void } = {}): Promise<Snapshot> {
   const { force = false, onBoard } = opts;
-  if (!force && snapshot) {
-    if (Date.now() - snapshot.fetchedAt >= TTL_MS) load().catch(() => {}); // logged per board in loadBoard
-    snapshot.boards.forEach((b) => onBoard?.(b));
-    return snapshot;
+  const current = state.snapshot;
+  if (!force && current) {
+    if (Date.now() - current.fetchedAt >= TTL_MS) load().catch(() => {}); // logged per board in loadBoard
+    current.boards.forEach((b) => onBoard?.(b));
+    return current;
   }
   const p = load();
   if (onBoard) {
-    progress.forEach(onBoard); // boards that already settled before this caller joined
-    listeners.add(onBoard);
-    p.finally(() => listeners.delete(onBoard)).catch(() => {});
+    state.progress.forEach(onBoard); // boards that already settled before this caller joined
+    state.listeners.add(onBoard);
+    p.finally(() => state.listeners.delete(onBoard)).catch(() => {});
   }
   return p;
 }
 
 /** Current snapshot without triggering a fetch. */
 export function peekJobs(): Snapshot | null {
-  return snapshot;
+  return state.snapshot;
 }
 
 /** Forces a refetch and reports what changed. Safe to call from a scheduler. */
 export async function refreshJobs() {
-  const before = snapshot;
+  const before = state.snapshot;
   const after = await getJobs({ force: true });
   const added = before ? after.jobs.filter((j) => !before.byId.has(j.id)) : [];
   const closed = before ? before.jobs.filter((j) => !after.byId.has(j.id)) : [];

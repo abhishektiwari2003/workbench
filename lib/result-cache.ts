@@ -3,12 +3,13 @@
 import { createHash } from "node:crypto";
 import type { RunContext } from "./store";
 import type { MatchResult, PipelineEvent } from "./types";
+import { singleton } from "./singleton";
 
 type Entry = { result: MatchResult; events: PipelineEvent[]; context: RunContext; snapshotAt: number; expires: number };
 
 const TTL_MS = 30 * 60_000;
 const MAX_ENTRIES = 500;
-const entries = new Map<string, Entry>();
+const entries = singleton("result-cache", () => new Map<string, Entry>());
 
 export function resultKey(resumeText: string, prefsKey: string): string {
   return createHash("sha256").update(`${resumeText.trim()}\n${prefsKey}`).digest("hex");

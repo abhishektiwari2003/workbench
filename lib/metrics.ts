@@ -2,20 +2,21 @@
 // and cost per candidate. In production these become Prometheus/OpenTelemetry metrics.
 import { usdFor, type Usage } from "./pricing";
 import type { BoardStatus } from "./types";
+import { singleton } from "./singleton";
 
 type LlmStat = { calls: number; cachedCalls: number; input: number; output: number; usd: number };
 type CacheStat = { hits: number; misses: number };
 type BoardStat = BoardStatus & { checkedAt: string };
 
-const llm = new Map<string, LlmStat>(); // keyed by call label, e.g. "match-score"
-const caches = new Map<string, CacheStat>(); // "llm" | "result" | "digest"
-const boards = new Map<string, BoardStat>();
-const candidates = { fresh: 0, cached: 0, computeUsd: 0, spentUsd: 0 };
-let today = { day: new Date().toISOString().slice(0, 10), spentUsd: 0 };
+const llm = singleton("m-llm", () => new Map<string, LlmStat>()); // keyed by call label, e.g. "match-score"
+const caches = singleton("m-caches", () => new Map<string, CacheStat>()); // "llm" | "result" | "digest"
+const boards = singleton("m-boards", () => new Map<string, BoardStat>());
+const candidates = singleton("m-candidates", () => ({ fresh: 0, cached: 0, computeUsd: 0, spentUsd: 0 }));
+const today = singleton("m-today", () => ({ day: new Date().toISOString().slice(0, 10), spentUsd: 0 }));
 
 function rollDay() {
   const day = new Date().toISOString().slice(0, 10);
-  if (today.day !== day) today = { day, spentUsd: 0 };
+  if (today.day !== day) Object.assign(today, { day, spentUsd: 0 });
 }
 
 export function recordLlm(label: string, usage: Usage, cached: boolean) {

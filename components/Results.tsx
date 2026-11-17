@@ -6,12 +6,20 @@ import { GOOD_SCORE, STRONG_SCORE } from "@/lib/schemas";
 import type { MatchResult, ScoredJob, Tier } from "@/lib/types";
 import CoachPanel from "./copilot/CoachPanel";
 import JobActions from "./copilot/JobActions";
+import FeedbackButtons from "./dashboard/FeedbackButtons";
 import JobCard from "./JobCard";
 import { COMPARE_MAX, CompareBar, CompareDialog } from "./results/Compare";
 import FiltersBar from "./results/FiltersBar";
 import ResultSummary from "./ResultSummary";
 
-type Props = { result: MatchResult; closedIds: Set<string>; restored: boolean; onRerun: () => void };
+type Props = {
+  result: MatchResult;
+  closedIds: Set<string>;
+  restored: boolean;
+  onRerun: () => void;
+  votes: Record<string, 1 | -1>;
+  onVote: (jobId: string, v: 1 | -1 | 0) => void;
+};
 
 function timeAgo(iso: string): string {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
@@ -27,7 +35,7 @@ const SECTIONS: { tier: Tier; title: string; note: string }[] = [
   { tier: "closest", title: "Closest available", note: `Nothing scored ${GOOD_SCORE}+ right now. These are the nearest roles, with honest gaps.` },
 ];
 
-export default function Results({ result, closedIds, restored, onRerun }: Props) {
+export default function Results({ result, closedIds, restored, onRerun, votes, onVote }: Props) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selected, setSelected] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
@@ -44,7 +52,14 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
       selected={selected.includes(m.job.id)}
       compareDisabled={selected.length >= COMPARE_MAX}
       onToggleCompare={() => toggle(m.job.id)}
-      actions={closedIds.has(m.job.id) ? undefined : <JobActions resultId={result.id} jobId={m.job.id} />}
+      actions={
+        closedIds.has(m.job.id) ? undefined : (
+          <>
+            <JobActions resultId={result.id} jobId={m.job.id} />
+            <FeedbackButtons vote={votes[m.job.id]} onVote={(v) => onVote(m.job.id, v)} />
+          </>
+        )
+      }
     />
   );
 

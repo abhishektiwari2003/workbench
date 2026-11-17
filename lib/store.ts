@@ -4,6 +4,7 @@
 import type { Ranked } from "./prefilter";
 import type { FastScore, Profile } from "./schemas";
 import type { MatchResult } from "./types";
+import { singleton } from "./singleton";
 
 export type RunContext = {
   resumeText: string;
@@ -17,7 +18,7 @@ type Entry = { result: MatchResult; context: RunContext; ownerId: string | null;
 
 const MAX_RESULTS = 1_000;
 const TTL_MS = 7 * 24 * 60 * 60_000;
-const results = new Map<string, Entry>(); // oldest-first eviction
+const results = singleton("results", () => new Map<string, Entry>()); // oldest-first eviction
 
 export function saveResult(result: MatchResult, context: RunContext, ownerId: string | null = null): void {
   if (results.size >= MAX_RESULTS) results.delete(results.keys().next().value as string);

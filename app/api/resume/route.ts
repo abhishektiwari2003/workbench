@@ -1,12 +1,19 @@
 // POST /api/resume  multipart/form-data { file } -> { text, truncated }
 import { fail, handleError, ok, readBodyCapped } from "@/lib/api";
-import { clientKey, LIMITS, limitOr429 } from "@/lib/rate-limit";
+import { requireUser, userKey } from "@/lib/auth";
+import { LIMITS, limitOr429 } from "@/lib/rate-limit";
 import { MAX_FILE_BYTES, ResumeFileError, resumeFileToText } from "@/lib/resume";
 
 const FORM_OVERHEAD_BYTES = 64_000; // multipart boundaries and headers around the file
 
 export async function POST(req: Request) {
-  const limited = limitOr429(clientKey(req, "resume"), LIMITS.resume, "Too many uploads.");
+  let userId: string;
+  try {
+    userId = await requireUser();
+  } catch (err) {
+    return handleError(err);
+  }
+  const limited = limitOr429(userKey(userId, "resume"), LIMITS.resume, "Too many uploads.");
   if (limited) return limited;
 
   // Counted while streaming, so a chunked upload without Content-Length can't bypass the cap.
