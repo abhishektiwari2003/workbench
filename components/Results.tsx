@@ -1,6 +1,12 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { applyFilters, companiesIn, DEFAULT_FILTERS, type Filters } from "@/lib/filters";
 import { GOOD_SCORE, STRONG_SCORE } from "@/lib/schemas";
 import type { MatchResult, ScoredJob, Tier } from "@/lib/types";
 import JobCard from "./JobCard";
+import { COMPARE_MAX, CompareBar, CompareDialog } from "./results/Compare";
+import FiltersBar from "./results/FiltersBar";
 import ResultSummary from "./ResultSummary";
 
 type Props = { result: MatchResult; closedIds: Set<string>; restored: boolean; onRerun: () => void };
@@ -20,11 +26,27 @@ const SECTIONS: { tier: Tier; title: string; note: string }[] = [
 ];
 
 export default function Results({ result, closedIds, restored, onRerun }: Props) {
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [comparing, setComparing] = useState(false);
+  const visible = useMemo(() => applyFilters(result.matches, filters), [result.matches, filters]);
+  const companies = useMemo(() => companiesIn(result.matches), [result.matches]);
   const closedCount = result.matches.filter((m) => closedIds.has(m.job.id)).length;
-  const byTier = (t: Tier): ScoredJob[] => result.matches.filter((m) => m.tier === t);
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < COMPARE_MAX ? [...s, id] : s));
+
+  const card = (m: ScoredJob) => (
+    <JobCard
+      key={m.job.id}
+      match={m}
+      closed={closedIds.has(m.job.id)}
+      selected={selected.includes(m.job.id)}
+      compareDisabled={selected.length >= COMPARE_MAX}
+      onToggleCompare={() => toggle(m.job.id)}
+    />
+  );
 
   return (
-    <div className="fade-in space-y-6">
+    <div className={`fade-in space-y-6 ${selected.length ? "pb-20" : ""}`}>
       {restored && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-zinc-200 bg-zinc-50 px-6 py-3 text-sm">
           <span>
@@ -43,7 +65,7 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
 
       <ResultSummary result={result} />
 
-      {result.matches.length === 0 && (
+      {result.matches.length === 0 ? (
         <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm">
           <p className="font-semibold">No roles on these boards line up with this resume.</p>
           <p className="mt-1 text-zinc-500">
@@ -51,27 +73,42 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
             resume names the roles and skills you want next.
           </p>
         </section>
+      ) : (
+        <FiltersBar filters={filters} onChange={setFilters} companies={companies} shown={visible.length} total={result.matches.length} />
       )}
 
-      {SECTIONS.map(({ tier, title, note }) => {
-        const jobs = byTier(tier);
-        if (jobs.length === 0) return null;
-        return (
-          <section key={tier} aria-labelledby={`tier-${tier}`}>
-            <div className="mb-3 flex items-baseline justify-between gap-2">
-              <h2 id={`tier-${tier}`} className="text-base font-semibold">
-                {title} <span className="text-zinc-500">({jobs.length})</span>
-              </h2>
-              <p className="hidden text-sm text-zinc-500 sm:block">{note}</p>
-            </div>
-            <ul className="space-y-4">
-              {jobs.map((m) => (
-                <JobCard key={m.job.id} match={m} closed={closedIds.has(m.job.id)} />
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+      {result.matches.length > 0 && visible.length === 0 && (
+        <p className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-500">
+          No matches with these filters. Clear a filter to see the rest.
+        </p>
+      )}
+
+      {filters.sort === "newest" ? (
+        visible.length > 0 && <ul className="space-y-4" aria-label="Matches, newest first">{visible.map(card)}</ul>
+      ) : (
+        SECTIONS.map(({ tier, title, note }) => {
+          const jobs = visible.filter((m) => m.tier === tier);
+          if (jobs.length === 0) return null;
+          return (
+            <section key={tier} aria-labelledby={`tier-${tier}`}>
+              <div className="mb-3 flex items-baseline justify-between gap-2">
+                <h2 id={`tier-${tier}`} className="text-base font-semibold">
+                  {title} <span className="text-zinc-500">({jobs.length})</span>
+                </h2>
+                <p className="hidden text-sm text-zinc-500 sm:block">{note}</p>
+              </div>
+              <ul className="space-y-4">{jobs.map(card)}</ul>
+            </section>
+          );
+        })
+      )}
+
+      <CompareBar count={selected.length} onOpen={() => setComparing(true)} onClear={() => setSelected([])} />
+      <CompareDialog
+        jobs={result.matches.filter((m) => selected.includes(m.job.id))}
+        open={comparing && selected.length >= 2}
+        onClose={() => setComparing(false)}
+      />
     </div>
   );
 }
