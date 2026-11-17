@@ -3,7 +3,7 @@ type ApiErrorBody = { error?: { code?: string; message?: string; fields?: Record
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; message: string };
 
-function humanMessage(status: number, body: ApiErrorBody | null): string {
+export function humanMessage(status: number, body: ApiErrorBody | null): string {
   const err = body?.error;
   if (status === 429) return err?.message ?? "You're going a bit fast. Wait a moment and retry.";
   if (err?.code?.startsWith("llm_")) return "Our AI matcher is busy right now. Your resume is fine. Please retry.";

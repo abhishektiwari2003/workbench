@@ -1,48 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { callApi } from "@/lib/client-api";
-import { RESUME_MAX, RESUME_MIN, type MatchResult } from "@/lib/schemas";
+import { funnelReducer, initialFunnel } from "@/lib/funnel-state";
+import { readSavedId, readSavedResume, remember } from "@/lib/saved-run";
+import { SAMPLE_RESUME } from "@/lib/sample-resume";
+import { RESUME_MAX, RESUME_MIN } from "@/lib/schemas";
+import { streamMatch } from "@/lib/sse-client";
+import type { MatchResult, PipelineEvent } from "@/lib/types";
+import History from "./dashboard/History";
+import { useMe } from "./dashboard/useMe";
+import Funnel from "./pipeline/Funnel";
 import ResumeInput from "./ResumeInput";
 import Results from "./Results";
 import ResultsSkeleton from "./ResultsSkeleton";
 
-const STORAGE_KEY = "cocareer:lastMatch";
-const RESUME_KEY = "cocareer:lastResume"; // { id, text }: kept on this device only, so "Check for new jobs" can re-run
-
 type Saved = MatchResult & { closedJobIds?: string[] };
 type ErrorState = { message: string; retry: () => void };
-
-function readSavedId(): string | null {
-  const fromHash = new URLSearchParams(window.location.hash.slice(1)).get("m");
-  if (fromHash) return fromHash;
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function readSavedResume(id: string): string | null {
-  try {
-    const saved = JSON.parse(localStorage.getItem(RESUME_KEY) ?? "null") as { id?: string; text?: string } | null;
-    return saved?.id === id && typeof saved.text === "string" ? saved.text : null;
-  } catch {
-    return null;
-  }
-}
-
-function remember(id: string | null, resumeText?: string) {
-  try {
-    if (id) localStorage.setItem(STORAGE_KEY, id);
-    else localStorage.removeItem(STORAGE_KEY);
-    if (id && resumeText) localStorage.setItem(RESUME_KEY, JSON.stringify({ id, text: resumeText }));
-    else if (!id) localStorage.removeItem(RESUME_KEY);
-  } catch {
-    // storage blocked (private mode): the URL hash still works
-  }
-  history.replaceState(null, "", id ? `#m=${id}` : window.location.pathname);
-}
 
 export default function MatchApp() {
   const [resume, setResume] = useState("");
@@ -52,8 +26,10 @@ export default function MatchApp() {
   const [result, setResult] = useState<MatchResult | null>(null);
   const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
   const [restored, setRestored] = useState(false);
-  const [jobsTotal, setJobsTotal] = useState<number | null>(null);
+  const [funnel, dispatch] = useReducer(funnelReducer, undefined, initialFunnel);
+  const [showFunnel, setShowFunnel] = useState(false);
   const [announce, setAnnounce] = useState("");
+  const { me, reload, setMe } = useMe();
   const controller = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -71,20 +47,13 @@ export default function MatchApp() {
     setResult(r.data);
     setClosedIds(new Set(r.data.closedJobIds ?? []));
     setRestored(true);
+    setShowFunnel(false);
     const text = readSavedResume(id);
     if (text) setResume((current) => current || text);
   }
 
-  useEffect(() => {
-    // Warm the server's job cache and show the live count; restore saved matches if any.
-    callApi<{ total: number }>("/api/jobs").then((r) => r.ok && setJobsTotal(r.data.total));
-    const id = readSavedId();
-    if (id) restore(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
-  }, []);
-
-  async function submit() {
-    const text = resume.trim();
+  async function submit(override?: string) {
+    const text = (override ?? resume).trim();
     if (text.length < RESUME_MIN) return setFieldError(`Add a bit more: at least ${RESUME_MIN} characters of resume text.`);
     if (text.length > RESUME_MAX) return setFieldError(`That's too long: keep it under ${RESUME_MAX.toLocaleString()} characters.`);
     setFieldError(null);
@@ -94,32 +63,78 @@ export default function MatchApp() {
     const ctrl = new AbortController();
     controller.current = ctrl;
     setPending(true);
+    setShowFunnel(true);
+    dispatch({ type: "reset" });
     setAnnounce("Finding your matches.");
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" }));
+
+    let streamError: string | null = null;
+    const onEvent = (e: PipelineEvent) => {
+      if (controller.current !== ctrl) return; // superseded
+      dispatch(e);
+      if (e.type === "result") {
+        setResult(e.result);
+        setClosedIds(new Set());
+        setRestored(false);
+        remember(e.result.id, text);
+        const n = e.result.matches.filter((m) => m.tier !== "closest").length;
+        setAnnounce(n ? `Found ${n} ${n === 1 ? "match" : "matches"}.` : "No strong or good matches; showing the closest roles.");
+      } else if (e.type === "error") streamError = e.message;
+    };
     try {
-      const res = await callApi<MatchResult>("/api/match", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ resumeText: text }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) {
-        setError({ message: res.message, retry: submit }); // announced once, by the alert itself
+      const outcome = await streamMatch(text, ctrl.signal, onEvent);
+      const message = streamError ?? (outcome.ok ? null : outcome.message);
+      if (message) {
+        setError({ message, retry: () => submit(text) }); // announced once, by the alert itself
         setAnnounce("");
-        return;
       }
-      setResult(res.data);
-      setClosedIds(new Set());
-      setRestored(false);
-      remember(res.data.id, text);
-      const n = res.data.matches.length;
-      setAnnounce(`Found ${n} strong ${n === 1 ? "match" : "matches"}.`);
+      reload(); // history and quota
     } catch {
       return; // aborted by a newer submit
     } finally {
       if (controller.current === ctrl) setPending(false);
     }
+  }
+
+  useEffect(() => {
+    callApi("/api/jobs"); // warms the server's job snapshot so the first search starts faster
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("sample") === "1") {
+      // From the landing page's "Try with sample resume": fill it in and run it once.
+      history.replaceState(null, "", window.location.pathname);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time init from the ?sample=1 link
+      setResume(SAMPLE_RESUME);
+      submit(SAMPLE_RESUME);
+    } else {
+      const id = readSavedId();
+      if (id) restore(id);
+    }
+    const onHash = () => {
+      const id = readSavedId();
+      if (id) restore(id);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
+  }, []);
+
+  async function vote(jobId: string, v: 1 | -1 | 0) {
+    if (!result || !me) return;
+    const votes = { ...me.votes };
+    if (v === 0) delete votes[jobId];
+    else votes[jobId] = v;
+    setMe({ ...me, votes }); // optimistic; the next search uses it
+    const r = await callApi("/api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resultId: result.id, jobId, vote: v }) });
+    if (!r.ok) reload();
+  }
+
+  /** Reopens a past run from history (cancels any search in flight first). */
+  function openRun(id: string) {
+    controller.current?.abort();
+    controller.current = null;
+    setPending(false);
+    window.location.hash = `m=${id}`; // the hashchange listener restores it
   }
 
   function rerun() {
@@ -131,14 +146,15 @@ export default function MatchApp() {
 
   return (
     <div className="space-y-8">
-      <ResumeInput value={resume} onChange={setResume} onSubmit={submit} pending={pending} fieldError={fieldError} />
+      <History me={me} currentId={result?.id ?? null} onOpen={openRun} />
+      <ResumeInput value={resume} onChange={setResume} onSubmit={() => submit()} pending={pending} fieldError={fieldError} />
 
       <div aria-live="polite" className="sr-only">
         {announce}
       </div>
 
       {error && (
-        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-600/20 bg-rose-50 px-6 py-4 text-sm text-rose-600">
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-600/20 bg-rose-50 px-6 py-4 text-sm text-rose-700">
           <span>{error.message}</span>
           <button
             type="button"
@@ -151,10 +167,13 @@ export default function MatchApp() {
         </div>
       )}
 
-      <div ref={resultsRef} className="scroll-mt-4" aria-busy={pending}>
+      <div ref={resultsRef} className="scroll-mt-4 space-y-6" aria-busy={pending}>
+        {showFunnel && <Funnel state={funnel} />}
         {/* While a new search runs, the skeleton replaces the old result so stale links can't be clicked. */}
-        {pending && <ResultsSkeleton jobsTotal={jobsTotal} />}
-        {result && !pending && <Results result={result} closedIds={closedIds} restored={restored} onRerun={rerun} />}
+        {pending && <ResultsSkeleton />}
+        {result && !pending && (
+          <Results key={result.id} result={result} closedIds={closedIds} restored={restored} onRerun={rerun} votes={me?.votes ?? {}} onVote={vote} />
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -13,7 +14,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${inter.variable} antialiased`}>
-      <body className="min-h-screen bg-white font-sans text-zinc-900">{children}</body>
+      <body className="min-h-screen bg-white font-sans text-zinc-900">
+        {/* Clerk docs: the provider goes inside <body>. Keys come from .env.local only. */}
+        <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up" signInFallbackRedirectUrl="/dashboard" signUpFallbackRedirectUrl="/dashboard">
+          {children}
+        </ClerkProvider>
+      </body>
     </html>
   );
 }

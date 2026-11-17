@@ -90,13 +90,19 @@ const LLM_MESSAGES: Record<LLMErrorKind, string> = {
   config: "Our AI matcher is unavailable right now. Please retry.",
 };
 
-/** Converts any thrown error into a safe JSON response without leaking internals. */
-export function handleError(err: unknown) {
-  if (err instanceof AppError) return fail(err.status, err.code, err.message);
+/** Safe status, code and message for any thrown error (also used for errors sent mid-stream over SSE). */
+export function describeError(err: unknown): { status: number; code: string; message: string } {
+  if (err instanceof AppError) return { status: err.status, code: err.code, message: err.message };
   if (err instanceof LLMError) {
     console.warn(JSON.stringify({ evt: "llm_error", kind: err.kind, detail: err.message }));
-    return fail(llmErrorStatus(err), `llm_${err.kind}`, LLM_MESSAGES[err.kind]);
+    return { status: llmErrorStatus(err), code: `llm_${err.kind}`, message: LLM_MESSAGES[err.kind] };
   }
   console.error(err);
-  return fail(500, "internal_error", "Something went wrong. Please try again.");
+  return { status: 500, code: "internal_error", message: "Something went wrong. Please try again." };
+}
+
+/** Converts any thrown error into a safe JSON response without leaking internals. */
+export function handleError(err: unknown) {
+  const { status, code, message } = describeError(err);
+  return fail(status, code, message);
 }

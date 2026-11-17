@@ -4,6 +4,11 @@
   --font-sans: var(--font-inter);
 }
 
+html {
+  /* Keeps focused or scrolled-to content clear of the sticky compare bar at the bottom. */
+  scroll-padding-bottom: 6rem;
+}
+
 body {
   background: #ffffff;
   color: var(--color-zinc-900);
