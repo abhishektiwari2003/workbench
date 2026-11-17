@@ -111,6 +111,9 @@ A: Strong is 70 and up, Good is 55 to 69, and Strong always comes first. If noth
 **Q: How is location handled for someone in India?**
 A: Every job is normalised to countries and regions in code. Ashby gives a structured workplace type, which we trust; its `isRemote` flag is true for hybrid roles, so we ignore that one. Greenhouse has no workplace field, so we only say remote or hybrid when the posting says so and never guess on-site. Then a deterministic location fit ranks same-country and remote-anywhere roles above on-site roles abroad, and the models see that verdict instead of guessing geography.
 
+**Q: Why Server-Sent Events and not WebSockets?**
+A: The traffic is one-way: the server reports progress and the browser just listens. SSE is plain HTTP from a normal route handler, works through CDNs and load balancers, and needs no extra server. I use a fetch body reader because EventSource can't POST a resume. If the user closes the tab, the shared run still finishes and fills the cache, so a retry is free.
+
 **Q: Why not just embed everything and do vector search?**
 A: It would work, but for 3,300 jobs keyword and title scoring is free, instant and explainable, and it got good shortlists in testing. Embeddings are the next step when the job pool grows to hundreds of thousands, or if prefilter recall turns out weak.
 
@@ -186,6 +189,7 @@ A: Accounts, a database, DOCX/OCR parsing, a feedback loop and email alerts for 
 | 19 | Upgrade phase 1: honest cost | Response-cache entries keep their original usage; whole results cached per resume + job snapshot + feedback state. Every result shows "Cost to compute" and, on a hit, "Served from cache · $0 spent" (verified: repeat in 15ms, $0.0364 compute, $0 spent) |
 | 20 | Upgrade phase 1: location | `lib/location.ts` normalises locations to countries/regions. Workplace comes from Ashby's structured `workplaceType` (its `isRemote` is true even for Hybrid, so the old "Remote friendly" label was wrong). Greenhouse has no such field, so we never guess "On-site". India test resume: every match India-based or remote-anywhere |
 | 21 | Upgrade phase 1: profile + boards | `country` added; target titles checked against years of experience in code (no Staff titles under 8 years). Board failures shown per board; verified with `SIMULATE_BOARD_FAILURE=linear` (9 boards matched, Linear listed as missing). Duplicate re-posts (same company + title) collapsed before scoring |
+| 22 | Upgrade phase 2: live pipeline over SSE | `POST /api/match/stream` streams board, stage, cost and result events (`lib/sse.ts`, heartbeat, `no-transform`). Identical concurrent runs share one channel that replays missed events; a cached result replays its stored events at $0. Client reads frames from a fetch body (EventSource can't POST). Funnel: boards tick green with counts, four stages fill, cost ticks per stage. Verified with `curl -N` (profile 2.6s, Haiku 6s, Sonnet 13s, $0.0348) and headless Chrome at 1280px and 390px |
 
 **Where the AI got it wrong and how it was caught:**
 - The scaffold commands assumed `cp -n` exits 0. I caught it because the build listing still showed `scaffold-tmp` and AGENTS.md, and the package name hadn't changed.

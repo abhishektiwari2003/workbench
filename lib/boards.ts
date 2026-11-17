@@ -7,20 +7,9 @@ import { fromAshby, fromGreenhouse } from "./board-parse";
 import { recordBoard } from "./metrics";
 import type { BoardStatus, Job } from "./types";
 
-type Source = "greenhouse" | "ashby";
-type Board = { company: string; slug: string; source: Source };
-export const BOARDS: Board[] = [
-  { company: "Stripe", slug: "stripe", source: "greenhouse" },
-  { company: "Databricks", slug: "databricks", source: "greenhouse" },
-  { company: "Airbnb", slug: "airbnb", source: "greenhouse" },
-  { company: "Duolingo", slug: "duolingo", source: "greenhouse" },
-  { company: "Discord", slug: "discord", source: "greenhouse" },
-  { company: "OpenAI", slug: "openai", source: "ashby" },
-  { company: "Ramp", slug: "ramp", source: "ashby" },
-  { company: "Notion", slug: "notion", source: "ashby" },
-  { company: "Supabase", slug: "supabase", source: "ashby" },
-  { company: "Linear", slug: "linear", source: "ashby" },
-];
+import { BOARDS, type Board } from "./board-list";
+
+export { BOARDS };
 
 const TTL_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 20_000;

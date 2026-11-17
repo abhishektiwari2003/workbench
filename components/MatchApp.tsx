@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { callApi } from "@/lib/client-api";
+import { funnelReducer, initialFunnel } from "@/lib/funnel-state";
 import { RESUME_MAX, RESUME_MIN } from "@/lib/schemas";
-import type { MatchResult } from "@/lib/types";
+import { streamMatch } from "@/lib/sse-client";
+import type { MatchResult, PipelineEvent } from "@/lib/types";
+import Funnel from "./pipeline/Funnel";
 import ResumeInput from "./ResumeInput";
 import Results from "./Results";
 import ResultsSkeleton from "./ResultsSkeleton";
@@ -53,7 +56,8 @@ export default function MatchApp() {
   const [result, setResult] = useState<MatchResult | null>(null);
   const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
   const [restored, setRestored] = useState(false);
-  const [jobsTotal, setJobsTotal] = useState<number | null>(null);
+  const [funnel, dispatch] = useReducer(funnelReducer, undefined, initialFunnel);
+  const [showFunnel, setShowFunnel] = useState(false);
   const [announce, setAnnounce] = useState("");
   const controller = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -77,8 +81,7 @@ export default function MatchApp() {
   }
 
   useEffect(() => {
-    // Warm the server's job cache and show the live count; restore saved matches if any.
-    callApi<{ total: number }>("/api/jobs").then((r) => r.ok && setJobsTotal(r.data.total));
+    callApi("/api/jobs"); // warms the server's job snapshot so the first search starts faster
     const id = readSavedId();
     if (id) restore(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
@@ -95,27 +98,32 @@ export default function MatchApp() {
     const ctrl = new AbortController();
     controller.current = ctrl;
     setPending(true);
+    setShowFunnel(true);
+    dispatch({ type: "reset" });
     setAnnounce("Finding your matches.");
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" }));
+
+    let streamError: string | null = null;
+    const onEvent = (e: PipelineEvent) => {
+      if (controller.current !== ctrl) return; // superseded
+      dispatch(e);
+      if (e.type === "result") {
+        setResult(e.result);
+        setClosedIds(new Set());
+        setRestored(false);
+        remember(e.result.id, text);
+        const n = e.result.matches.filter((m) => m.tier !== "closest").length;
+        setAnnounce(n ? `Found ${n} ${n === 1 ? "match" : "matches"}.` : "No strong or good matches; showing the closest roles.");
+      } else if (e.type === "error") streamError = e.message;
+    };
     try {
-      const res = await callApi<MatchResult>("/api/match", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ resumeText: text }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) {
-        setError({ message: res.message, retry: submit }); // announced once, by the alert itself
+      const outcome = await streamMatch(text, ctrl.signal, onEvent);
+      const message = streamError ?? (outcome.ok ? null : outcome.message);
+      if (message) {
+        setError({ message, retry: submit }); // announced once, by the alert itself
         setAnnounce("");
-        return;
       }
-      setResult(res.data);
-      setClosedIds(new Set());
-      setRestored(false);
-      remember(res.data.id, text);
-      const n = res.data.matches.filter((m) => m.tier !== "closest").length;
-      setAnnounce(n ? `Found ${n} ${n === 1 ? "match" : "matches"}.` : "No strong or good matches; showing the closest roles.");
     } catch {
       return; // aborted by a newer submit
     } finally {
@@ -139,7 +147,7 @@ export default function MatchApp() {
       </div>
 
       {error && (
-        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-600/20 bg-rose-50 px-6 py-4 text-sm text-rose-600">
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-600/20 bg-rose-50 px-6 py-4 text-sm text-rose-700">
           <span>{error.message}</span>
           <button
             type="button"
@@ -152,9 +160,10 @@ export default function MatchApp() {
         </div>
       )}
 
-      <div ref={resultsRef} className="scroll-mt-4" aria-busy={pending}>
+      <div ref={resultsRef} className="scroll-mt-4 space-y-6" aria-busy={pending}>
+        {showFunnel && <Funnel state={funnel} />}
         {/* While a new search runs, the skeleton replaces the old result so stale links can't be clicked. */}
-        {pending && <ResultsSkeleton jobsTotal={jobsTotal} />}
+        {pending && <ResultsSkeleton />}
         {result && !pending && <Results result={result} closedIds={closedIds} restored={restored} onRerun={rerun} />}
       </div>
     </div>
