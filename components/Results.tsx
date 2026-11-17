@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { applyFilters, companiesIn, DEFAULT_FILTERS, type Filters } from "@/lib/filters";
 import { GOOD_SCORE, STRONG_SCORE } from "@/lib/schemas";
 import type { MatchResult, ScoredJob, Tier } from "@/lib/types";
+import CoachPanel from "./copilot/CoachPanel";
+import JobActions from "./copilot/JobActions";
 import JobCard from "./JobCard";
 import { COMPARE_MAX, CompareBar, CompareDialog } from "./results/Compare";
 import FiltersBar from "./results/FiltersBar";
@@ -42,6 +44,7 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
       selected={selected.includes(m.job.id)}
       compareDisabled={selected.length >= COMPARE_MAX}
       onToggleCompare={() => toggle(m.job.id)}
+      actions={closedIds.has(m.job.id) ? undefined : <JobActions resultId={result.id} jobId={m.job.id} />}
     />
   );
 
@@ -64,6 +67,8 @@ export default function Results({ result, closedIds, restored, onRerun }: Props)
       )}
 
       <ResultSummary result={result} />
+
+      {result.matches.length > 0 && <CoachPanel key={result.id} resultId={result.id} shownIds={new Set(result.matches.map((m) => m.job.id))} />}
 
       {result.matches.length === 0 ? (
         <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm">

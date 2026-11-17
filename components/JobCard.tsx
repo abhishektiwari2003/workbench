@@ -23,7 +23,11 @@ export default function JobCard({ match, closed, selected = false, compareDisabl
   const { job, score, reasons, gaps, tier, locationFit, breakdown } = match;
   const posted = postedAgo(job.postedAt);
   return (
-    <li className={`rounded-2xl border p-6 shadow-sm transition-colors ${selected ? "border-indigo-600" : "border-zinc-200"} ${closed ? "bg-zinc-50" : "bg-white"}`}>
+    <li
+      id={`job-${job.id}`}
+      tabIndex={-1}
+      className={`scroll-mt-4 rounded-2xl border p-6 shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 ${selected ? "border-indigo-600" : "border-zinc-200"} ${closed ? "bg-zinc-50" : "bg-white"}`}
+    >
       <div className="flex items-start gap-4">
         <div
           className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-base font-semibold ring-1 ${closed ? "bg-zinc-100 text-zinc-700 ring-zinc-200" : TONE[tier]}`}

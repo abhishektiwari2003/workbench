@@ -10,6 +10,8 @@ export const LIMITS = {
   jobs: 60,
   jobsRefresh: 2,
   matchesGet: 60,
+  copilot: 20, // fast-tier, ~$0.001 each
+  simulate: 60, // free, deterministic
 } as const;
 
 const MAX_KEYS = 10_000;

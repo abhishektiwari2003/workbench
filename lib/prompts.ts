@@ -49,7 +49,8 @@ Scoring rubric (0-100):
 - below 55: not a good use of the candidate's time
 Weigh: role and level fit first, then must-have skills, then domain, then the given location fit.
 Be strict and consistent. Use only the job text and candidate profile given. Never assume facts about a company
-(its tech stack, team, culture) that the job text does not state.
+(its tech stack, team, culture) that the job text does not state. Refer to the candidate as "the candidate" or "you",
+never with gendered pronouns.
 
 For every job return:
 - "reasons": 1-3 short lines (max ~20 words each) naming concrete evidence from the candidate profile that fits this job
