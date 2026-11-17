@@ -21,7 +21,7 @@ export async function GET() {
       newJobsSinceLastVisit,
       previousVisitAt: previousVisitAt ? new Date(previousVisitAt).toISOString() : null,
       votes: Object.fromEntries([...votesOf(userId)].map(([id, v]) => [id, v.vote])),
-      newMatches: newMatchesOf(userId),
+      newMatches: newMatchesOf(userId).filter((m) => !snapshot || snapshot.byId.has(m.job.id)), // closed since: hidden
     });
     res.headers.set("cache-control", "private, no-store");
     return res;

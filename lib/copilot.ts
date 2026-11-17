@@ -5,6 +5,7 @@ import { CostMeter } from "./cost";
 import { generateJSON } from "./llm";
 import { COACH_SYSTEM, coachInput, jobActionInput, OUTREACH_SYSTEM, PREP_SYSTEM, TAILOR_SYSTEM } from "./prompts-copilot";
 import type { RunContext } from "./store";
+import { tokens } from "./text";
 import type { MatchResult } from "./types";
 
 const Short = (n: number) => z.string().max(n);
@@ -34,10 +35,23 @@ export const CopilotRequestSchema = z.discriminatedUnion("action", [
 export type CopilotRequest = z.infer<typeof CopilotRequestSchema>;
 
 const COACH_TOP = 20; // gaps across the top 20 scored jobs
+const TIMEOUT_MS = 40_000; // a click never hangs longer than this, retries included
+const GROUNDED = 0.6; // share of a "before" bullet's words that must appear in the resume
+
+/** A tailored "before" must quote the resume: drop bullets whose original the model made up. */
+function groundBullets(bullets: { before: string; after: string }[], resumeText: string) {
+  const have = new Set(tokens(resumeText));
+  const kept = bullets.filter((b) => {
+    const t = tokens(b.before);
+    return t.length > 0 && t.filter((x) => have.has(x)).length / t.length >= GROUNDED;
+  });
+  if (!kept.length) throw new AppError("We couldn't tailor this role reliably. Please try again.", 502, "ungrounded");
+  return { bullets: kept };
+}
 
 export async function runCopilot(req: CopilotRequest, ctx: RunContext, result: MatchResult) {
   const meter = new CostMeter();
-  const common = { model: "fast" as const, effort: "low" as const, onUsage: meter.for("copilot") };
+  const common = { model: "fast" as const, effort: "low" as const, onUsage: meter.for("copilot"), signal: AbortSignal.timeout(TIMEOUT_MS) };
   const explainedGaps = new Map(result.matches.map((m) => [m.job.id, m.gaps]));
   const gapsFor = (id: string) => explainedGaps.get(id) ?? (ctx.fast.get(id)?.gap ? [ctx.fast.get(id)!.gap] : []);
 
@@ -64,7 +78,7 @@ export async function runCopilot(req: CopilotRequest, ctx: RunContext, result: M
     const label = `copilot-${req.action}`;
     output =
       req.action === "tailor"
-        ? await generateJSON({ ...common, system: TAILOR_SYSTEM, input, schema: TailorSchema, maxTokens: 1_200, label })
+        ? groundBullets((await generateJSON({ ...common, system: TAILOR_SYSTEM, input, schema: TailorSchema, maxTokens: 1_200, label })).bullets, ctx.resumeText)
         : req.action === "outreach"
           ? await generateJSON({ ...common, system: OUTREACH_SYSTEM, input, schema: OutreachSchema, maxTokens: 900, label })
           : await generateJSON({ ...common, system: PREP_SYSTEM, input, schema: PrepSchema, maxTokens: 1_400, label });

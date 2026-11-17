@@ -40,6 +40,7 @@ export async function fastScore(ranked: Ranked[], { profile, meter, signal, dige
   return { scores, failed };
 }
 
+/** Throws only when every batch fails; a partly failed run is reported by the caller as `unexplained`. */
 export async function explain(ranked: Ranked[], { profile, meter, signal, digests }: Ctx, onBatch: (n: number) => void) {
   const { results } = await runBatches(
     ranked,

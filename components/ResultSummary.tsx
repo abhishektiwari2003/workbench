@@ -61,6 +61,12 @@ export default function ResultSummary({ result }: { result: MatchResult }) {
           {stats.unscored} shortlisted roles couldn&apos;t be scored this time. Run the search again to include them.
         </p>
       )}
+      {(stats.unexplained ?? 0) > 0 && (
+        <p className="mt-2 text-sm text-amber-700">
+          Explanations are unavailable for {stats.unexplained} {stats.unexplained === 1 ? "role" : "roles"}, so their first-pass scores are shown. Run the
+          search again to get them.
+        </p>
+      )}
 
       <div className="mt-4 border-t border-zinc-200 pt-4 text-sm">
         <p className="text-zinc-500">How we read your resume</p>

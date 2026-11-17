@@ -1,7 +1,7 @@
 // GET /api/ops -> board health, cache hit rates, LLM calls/tokens/cost per stage, cost today,
-// average cost per candidate, quality, and the monthly cost projection. Signed-in only.
+// average cost per candidate, quality, and the monthly cost projection. Operators only (lib/auth.ts requireOps).
 import { handleError, ok } from "@/lib/api";
-import { requireUser, userKey } from "@/lib/auth";
+import { requireOps, userKey } from "@/lib/auth";
 import { peekJobs } from "@/lib/boards";
 import { digestCount } from "@/lib/digests";
 import { metricsSnapshot } from "@/lib/metrics";
@@ -10,7 +10,7 @@ import { LIMITS, limitOr429 } from "@/lib/rate-limit";
 
 export async function GET() {
   try {
-    const userId = await requireUser();
+    const userId = await requireOps();
     const limited = limitOr429(userKey(userId, "ops"), LIMITS.ops);
     if (limited) return limited;
     const m = metricsSnapshot();

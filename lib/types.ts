@@ -65,7 +65,7 @@ export type MatchResult = {
   createdAt: string;
   servedFromCache: boolean;
   profile: ProfileSummary;
-  stats: { jobsScanned: number; boards: BoardStatus[]; unscored: number; ms: number };
+  stats: { jobsScanned: number; boards: BoardStatus[]; unscored: number; unexplained?: number; ms: number };
   funnel: Funnel;
   matches: ScoredJob[]; // ordered: strong, then good (or closest when nothing qualifies)
   cost: MatchCost;

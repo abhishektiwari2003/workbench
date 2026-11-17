@@ -6,6 +6,9 @@ export const RESUME_MIN = 200;
 export const RESUME_MAX = 30_000;
 /** Fewer distinct words than this is not a resume (e.g. "aaaa..." padding); rejected before any LLM call. */
 export const RESUME_MIN_DISTINCT_WORDS = 20;
+// Chinese, Japanese and Thai don't separate words with spaces: count their distinct characters as words.
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/gu;
+const distinctWords = (s: string) => new Set([...tokens(s), ...(s.match(UNSPACED) ?? [])]).size;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 export const SHORTLIST_SIZE = 40; // jobs the cheap model scores; recall dial
@@ -74,7 +77,7 @@ export const MatchRequestSchema = z.object({
     .min(RESUME_MIN, `Resume must be at least ${RESUME_MIN} characters`)
     .max(RESUME_MAX, `Resume must be at most ${RESUME_MAX.toLocaleString()} characters`)
     .refine(
-      (s) => s.length < RESUME_MIN || new Set(tokens(s)).size >= RESUME_MIN_DISTINCT_WORDS,
+      (s) => s.length < RESUME_MIN || distinctWords(s) >= RESUME_MIN_DISTINCT_WORDS,
       "That doesn't look like a resume. Paste the full text of your resume.",
     ),
 });

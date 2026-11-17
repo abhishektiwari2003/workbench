@@ -16,6 +16,15 @@ export function groundSkills(profile: Profile, resumeText: string): Profile {
   return grounded.length ? { ...profile, skills: grounded } : profile;
 }
 
+const joinThousands = (s: string) => s.replace(/(\d),(\d)/g, "$1$2"); // "1,200" and "1200" compare equal
+
+/** Highlights reach Sonnet as the candidate's evidence: drop any that cite a number the resume doesn't contain. */
+export function groundHighlights(profile: Profile, resumeText: string): Profile {
+  const resume = joinThousands(resumeText);
+  const grounded = (h: string) => (joinThousands(h).match(/\d+(?:\.\d+)?/g) ?? []).every((n) => resume.includes(n));
+  return { ...profile, highlights: profile.highlights.filter(grounded) };
+}
+
 const LEVEL_BY_RANK: Record<number, Seniority> = { 0: "intern", 1: "junior", 2: "mid", 3: "senior", 4: "staff", 5: "principal" };
 const LEVEL_WORDS = /\b(senior|sr\.?|staff|principal|lead|distinguished|head of)\s*/gi;
 
@@ -57,5 +66,5 @@ export async function buildProfile(resumeText: string, meter: CostMeter, signal:
     throw new AppError("That doesn't look like a resume. Paste or upload your resume and try again.", 422, "not_a_resume");
   }
   const country = normaliseCountry(extracted.country) ?? normaliseCountry(extracted.locations.join("; "));
-  return fitTitlesToYears(groundSkills({ ...extracted, country }, resumeText));
+  return fitTitlesToYears(groundHighlights(groundSkills({ ...extracted, country }, resumeText), resumeText));
 }

@@ -9,7 +9,7 @@ import { digestInBackground, warmDigests } from "../digests";
 import { recordCache, recordCandidate } from "../metrics";
 import { shortlist } from "../prefilter";
 import { getCached, resultKey, setCached } from "../result-cache";
-import { SHORTLIST_SIZE } from "../schemas";
+import { SHORTLIST_SIZE, type Explained } from "../schemas";
 import { saveResult, type RunContext } from "../store";
 import type { Job, MatchResult, PipelineEvent } from "../types";
 import { buildProfile } from "./profile";
@@ -38,12 +38,13 @@ export type RunOptions = {
   prefsKey?: string; // changes when the user's feedback changes, so cached rankings don't go stale
   nudge?: (job: Job) => number; // per-user ranking nudge from thumbs up/down
   feedbackCount?: number; // how many ratings shaped this ranking (shown to the user)
-  ownerId?: string | null;
+  ownerId: string; // required: results are owner-only, never readable by id alone
 };
 
-/** Would this resume be served from the result cache right now (free, doesn't count against quota)? */
-export function isCachedRun(resumeText: string, prefsKey = ""): boolean {
-  return Boolean(getCached(resultKey(resumeText, prefsKey), peekJobs()?.fetchedAt));
+/** Would this resume cost nothing right now (cached, or joining an identical run in flight)? Free runs skip the quota. */
+export function isFreeRun(resumeText: string, prefsKey = ""): boolean {
+  const key = resultKey(resumeText, prefsKey);
+  return inflight.has(key) || Boolean(getCached(key, peekJobs()?.fetchedAt));
 }
 
 async function compute(resumeText: string, channel: RunChannel, opts: RunOptions) {
@@ -78,8 +79,15 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
 
   const toExplain = pickForExplain(ranked, fast);
   let explainedCount = 0;
-  const explained = toExplain.length
-    ? await explain(toExplain, { profile, meter, signal, digests: warm }, (n) => emitStage("explained", (explainedCount += n), false))
+  // Explanations are the last, priciest stage: if every Sonnet batch fails, keep Haiku's scores rather than
+  // failing a search that has already been paid for. The UI says the explanations are missing.
+  const explained: Map<string, Explained> = toExplain.length
+    ? await explain(toExplain, { profile, meter, signal, digests: warm }, (n) => emitStage("explained", (explainedCount += n), false)).catch(
+        (err: unknown) => {
+          console.warn(JSON.stringify({ evt: "explain_failed", error: err instanceof Error ? err.message : String(err) }));
+          return new Map<string, Explained>();
+        },
+      )
     : new Map();
   emitStage("explained", explained.size, true);
 
@@ -99,7 +107,7 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
       skills: profile.skills.slice(0, 12),
       openToRemote: profile.openToRemote,
     },
-    stats: { jobsScanned: snapshot.jobs.length, boards: snapshot.boards, unscored: ranked.length - fast.size, ms: Date.now() - started },
+    stats: { jobsScanned: snapshot.jobs.length, boards: snapshot.boards, unscored: ranked.length - fast.size, unexplained: toExplain.length - explained.size, ms: Date.now() - started },
     funnel: { scanned: snapshot.jobs.length, prefiltered: ranked.length, scored: fast.size, explained: explained.size },
     digests: { cached: warm.size, computed: scheduled },
     matches: assignTiers(scored, tieBreak),
@@ -110,12 +118,13 @@ async function compute(resumeText: string, channel: RunChannel, opts: RunOptions
   return { result, context };
 }
 
-type Inflight = { channel: RunChannel; promise: Promise<{ result: MatchResult; context: RunContext }>; ownerId: string | null };
+type Inflight = { channel: RunChannel; promise: Promise<{ result: MatchResult; context: RunContext }>; ownerId: string };
 const inflight = new Map<string, Inflight>();
 
-export async function runMatch(resumeText: string, opts: RunOptions = {}): Promise<MatchResult> {
+/** `created` is true only for the caller that started (and paid for) a fresh run: the one to charge quota. */
+export async function runMatch(resumeText: string, opts: RunOptions): Promise<{ result: MatchResult; created: boolean }> {
   const key = resultKey(resumeText, opts.prefsKey ?? "");
-  const ownerId = opts.ownerId ?? null;
+  const { ownerId } = opts;
 
   const hit = getCached(key, peekJobs()?.fetchedAt);
   recordCache("result", Boolean(hit));
@@ -133,16 +142,20 @@ export async function runMatch(resumeText: string, opts: RunOptions = {}): Promi
     saveResult(result, hit.context, ownerId);
     recordCandidate(result);
     opts.emit?.({ type: "result", result });
-    return result;
+    return { result, created: false };
   }
 
   // Single-flight: identical resumes submitted concurrently (double click, two tabs) share one run.
   let run = inflight.get(key);
+  const created = !run;
   if (!run) {
     const channel = new RunChannel();
     const promise = compute(resumeText, channel, opts)
       .then(({ result, context }) => {
-        setCached(key, { result, events: [...channel.events], context, snapshotAt: context.snapshotAt });
+        // A partial result is not cached, so "run the search again" really does retry the missing jobs.
+        if (!result.stats.unscored && !result.stats.unexplained) {
+          setCached(key, { result, events: [...channel.events], context, snapshotAt: context.snapshotAt });
+        }
         saveResult(result, context, ownerId);
         recordCandidate(result);
         channel.emit({ type: "result", result });
@@ -156,11 +169,11 @@ export async function runMatch(resumeText: string, opts: RunOptions = {}): Promi
   const unsubscribe = opts.emit ? run.channel.subscribe(joined ? (e) => e.type !== "result" && opts.emit!(e) : opts.emit) : undefined;
   try {
     const { result, context } = await run.promise;
-    if (!joined) return result;
+    if (!joined) return { result, created };
     const own: MatchResult = { ...result, id: randomUUID(), cost: { ...result.cost, spentUsd: 0 }, servedFromCache: true };
     saveResult(own, context, ownerId);
     opts.emit?.({ type: "result", result: own });
-    return own;
+    return { result: own, created: false };
   } finally {
     unsubscribe?.();
   }

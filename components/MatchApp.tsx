@@ -172,7 +172,7 @@ export default function MatchApp() {
         {/* While a new search runs, the skeleton replaces the old result so stale links can't be clicked. */}
         {pending && <ResultsSkeleton />}
         {result && !pending && (
-          <Results result={result} closedIds={closedIds} restored={restored} onRerun={rerun} votes={me?.votes ?? {}} onVote={vote} />
+          <Results key={result.id} result={result} closedIds={closedIds} restored={restored} onRerun={rerun} votes={me?.votes ?? {}} onVote={vote} />
         )}
       </div>
     </div>

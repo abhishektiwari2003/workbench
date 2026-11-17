@@ -84,7 +84,7 @@ export default function ResumeInput({ value, onChange, onSubmit, pending, fieldE
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
-            onSubmit();
+            if (!pending) onSubmit(); // same rule as the disabled button: no second search while one runs
           }
         }}
         rows={10}

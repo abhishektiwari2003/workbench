@@ -12,7 +12,7 @@ export const LIMITS = {
   jobsRefresh: 2,
   matchesGet: 60,
   copilot: 20, // fast-tier, ~$0.001 each
-  simulate: 60, // free, deterministic
+  simulate: 10, // free in dollars but ~140ms of CPU (two full prefilter passes) per call
   feedback: 60,
   quality: 10, // smart tier, ~$0.015 each
   ops: 60,

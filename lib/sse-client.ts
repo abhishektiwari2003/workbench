@@ -25,6 +25,7 @@ export async function streamMatch(resumeText: string, signal: AbortSignal, onEve
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
+  let finished = false; // saw a final `result` or `error` event
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -39,12 +40,17 @@ export async function streamMatch(resumeText: string, signal: AbortSignal, onEve
           .filter((l) => l.startsWith("data:"))
           .map((l) => l.slice(5).trimStart())
           .join("\n");
-        if (data) onEvent(JSON.parse(data) as PipelineEvent);
+        if (!data) continue;
+        const e = JSON.parse(data) as PipelineEvent;
+        if (e.type === "result" || e.type === "error") finished = true;
+        onEvent(e);
       }
     }
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
     return { ok: false, status: 0, message: "The connection dropped before your matches arrived. Please retry." };
   }
+  // A stream that just ends (platform time limit, proxy) must offer Retry, not stop silently.
+  if (!finished) return { ok: false, status: 0, message: "The connection dropped before your matches arrived. Please retry." };
   return { ok: true };
 }

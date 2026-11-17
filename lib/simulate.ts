@@ -21,7 +21,8 @@ export function qualifyingBar(ctx: RunContext, result: MatchResult): number {
   return qualified.length ? Math.min(...qualified) : (ctx.ranked.at(-1)?.prefilter ?? 0);
 }
 
-export function simulate(ctx: RunContext, result: MatchResult, jobs: Job[], req: SimulateRequest) {
+/** `nudge` is the user's feedback nudge: the bar includes it, so both sides of the comparison must too. */
+export function simulate(ctx: RunContext, result: MatchResult, jobs: Job[], req: SimulateRequest, nudge?: (job: Job) => number) {
   const bar = qualifyingBar(ctx, result);
 
   const lower = (xs: string[]) => new Set(xs.map((x) => x.toLowerCase()));
@@ -33,8 +34,8 @@ export function simulate(ctx: RunContext, result: MatchResult, jobs: Job[], req:
     targetTitles: [...ctx.profile.targetTitles, ...req.addTitles.filter((t) => !haveTitles.has(t.toLowerCase()))].slice(0, 8),
   };
 
-  const before = new Set(rankAll(ctx.profile, jobs).filter((r) => r.prefilter >= bar).map((r) => r.job.id));
-  const after = rankAll(changed, jobs).filter((r) => r.prefilter >= bar);
+  const before = new Set(rankAll(ctx.profile, jobs, nudge).filter((r) => r.prefilter >= bar).map((r) => r.job.id));
+  const after = rankAll(changed, jobs, nudge).filter((r) => r.prefilter >= bar);
   const newly = after.filter((r) => !before.has(r.job.id));
   return {
     bar: Math.round(bar * 1000) / 1000,

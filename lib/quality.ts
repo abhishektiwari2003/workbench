@@ -45,6 +45,7 @@ export async function judgeQuality(ctx: RunContext, result: MatchResult) {
     maxTokens: 2_000,
     label: "quality-judge",
     onUsage: meter.for("quality"),
+    signal: AbortSignal.timeout(40_000), // a click never hangs longer than this, retries included
   });
   const verdict = new Map(judged.results.map((r) => [r.id, r]));
   const topIds = new Set(top.map((r) => r.job.id));

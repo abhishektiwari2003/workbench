@@ -7,11 +7,23 @@ export const PRICES: Record<string, { input: number; output: number; cacheRead: 
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
 };
 const FALLBACK = PRICES["claude-sonnet-5-5"];
+const warned = new Set<string>();
+
+/** Exact id, else a dated snapshot of a known model ("claude-haiku-5-5-2026..."), else Sonnet with a one-time warning. */
+function priceOf(model: string) {
+  const known = PRICES[model] ?? Object.entries(PRICES).find(([id]) => model.startsWith(id))?.[1];
+  if (known) return known;
+  if (!warned.has(model)) {
+    warned.add(model);
+    console.warn(JSON.stringify({ evt: "unknown_model_price", model, pricedAs: "claude-sonnet-5-5" }));
+  }
+  return FALLBACK;
+}
 
 export type Usage = { model: string; input: number; output: number; cacheRead: number; cacheWrite: number };
 
 export function usdFor(u: Usage): number {
-  const p = PRICES[u.model] ?? FALLBACK;
+  const p = priceOf(u.model);
   return (u.input * p.input + u.cacheWrite * p.input * 1.25 + u.cacheRead * p.cacheRead + u.output * p.output) / 1e6;
 }
 

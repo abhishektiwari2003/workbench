@@ -14,13 +14,13 @@ export type RunContext = {
   snapshotAt: number; // job snapshot the run used
 };
 
-type Entry = { result: MatchResult; context: RunContext; ownerId: string | null; expires: number };
+type Entry = { result: MatchResult; context: RunContext; ownerId: string; expires: number };
 
 const MAX_RESULTS = 1_000;
 const TTL_MS = 7 * 24 * 60 * 60_000;
 const results = singleton("results", () => new Map<string, Entry>()); // oldest-first eviction
 
-export function saveResult(result: MatchResult, context: RunContext, ownerId: string | null = null): void {
+export function saveResult(result: MatchResult, context: RunContext, ownerId: string): void {
   if (results.size >= MAX_RESULTS) results.delete(results.keys().next().value as string);
   results.set(result.id, { result, context, ownerId, expires: Date.now() + TTL_MS });
 }
@@ -35,13 +35,13 @@ function entry(id: string): Entry | undefined {
   return hit;
 }
 
-/** A result is visible to its owner; anonymous results (no owner) to anyone holding the id. */
-export function getResult(id: string, userId: string | null = null): MatchResult | undefined {
+/** Owner-only: every result has an owner, and holding the id is never enough to read it. */
+export function getResult(id: string, userId: string): MatchResult | undefined {
   const e = entry(id);
-  return e && (e.ownerId === null || e.ownerId === userId) ? e.result : undefined;
+  return e && e.ownerId === userId ? e.result : undefined;
 }
 
-export function getContext(id: string, userId: string | null = null): RunContext | undefined {
+export function getContext(id: string, userId: string): RunContext | undefined {
   const e = entry(id);
-  return e && (e.ownerId === null || e.ownerId === userId) ? e.context : undefined;
+  return e && e.ownerId === userId ? e.context : undefined;
 }

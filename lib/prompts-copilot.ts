@@ -31,6 +31,7 @@ Return JSON: {"bullets":[{"before": string (the original bullet, shortened if lo
 export const OUTREACH_SYSTEM = `You write a short, specific note from a candidate to the hiring manager for one job.
 Under 120 words. Plain, confident, no flattery or clichés. Mention 1-2 concrete achievements from the resume that map to the job,
 and acknowledge nothing negative. End with a simple ask for a conversation.
+Use only facts stated in the resume: never invent achievements, numbers, employers or tools. Never guess the candidate's gender.
 Return JSON: {"subject": string (max 10 words), "message": string}`;
 
 export const PREP_SYSTEM = `${VOICE}

@@ -34,6 +34,12 @@ export function recordLlm(label: string, usage: Usage, cached: boolean) {
   llm.set(label, s);
 }
 
+/** LLM spend so far today (UTC), for the platform-wide daily budget. */
+export function spentTodayUsd(): number {
+  rollDay();
+  return today.spentUsd;
+}
+
 export function recordCache(name: string, hit: boolean) {
   const s = caches.get(name) ?? { hits: 0, misses: 0 };
   if (hit) s.hits += 1;

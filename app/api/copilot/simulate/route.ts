@@ -3,9 +3,11 @@
 import { fail, handleError, ok, parseBody } from "@/lib/api";
 import { getJobs } from "@/lib/boards";
 import { requireUser, userKey } from "@/lib/auth";
+import { nudgeFrom } from "@/lib/feedback";
 import { LIMITS, limitOr429 } from "@/lib/rate-limit";
 import { simulate, SimulateRequestSchema } from "@/lib/simulate";
 import { getContext, getResult } from "@/lib/store";
+import { votesOf } from "@/lib/users";
 
 export async function POST(req: Request) {
   let userId: string;
@@ -24,7 +26,7 @@ export async function POST(req: Request) {
   if (!ctx || !result) return fail(404, "not_found", "These matches have expired. Run a new search.");
   try {
     const snapshot = await getJobs();
-    return ok({ ...simulate(ctx, result, snapshot.jobs, data), costUsd: 0 });
+    return ok({ ...simulate(ctx, result, snapshot.jobs, data, nudgeFrom(votesOf(userId))), costUsd: 0 });
   } catch (err) {
     return handleError(err);
   }

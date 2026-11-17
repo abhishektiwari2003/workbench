@@ -47,10 +47,25 @@ export function quotaOf(userId: string) {
   return { used, limit: DAILY_RUNS, remaining: Math.max(0, DAILY_RUNS - used) };
 }
 
+/** Takes one of today's searches before the run starts, so concurrent requests can't all pass the check. */
+export function reserveRun(userId: string): boolean {
+  const q = state(userId).quota;
+  if (q.used >= DAILY_RUNS) return false;
+  q.used += 1;
+  return true;
+}
+
+/** Gives a reserved search back: the run failed, or it turned out to be free (cache hit or joined a run). */
+export function refundRun(userId: string) {
+  const q = state(userId).quota;
+  q.used = Math.max(0, q.used - 1);
+}
+
+/** Adds a run to history. Quota is settled separately (reserveRun/refundRun); the same id is recorded once. */
 export function recordRun(userId: string, r: MatchResult) {
   const s = state(userId);
   s.newMatches = s.newMatches.filter((m) => !r.matches.some((x) => x.job.id === m.job.id)); // now part of a full result
-  if (!r.servedFromCache) s.quota.used += 1;
+  if (s.runs.some((x) => x.id === r.id)) return; // a second tab joined this user's own in-flight run
   s.runs.unshift({
     id: r.id,
     createdAt: r.createdAt,

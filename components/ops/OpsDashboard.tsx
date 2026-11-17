@@ -17,7 +17,7 @@ type Ops = {
   digests: { cached: number; coverage: number };
   projection: Projection;
 };
-type Refresh = { total: number; added: number; closed: number; simulated: number; usersChecked: number; jobsRescored: number; newMatches: number; costUsd: number };
+type Refresh = { total: number; added: number; closed: number; simulated: number; usersChecked: number; usersFailed?: number; usersSkipped?: number; jobsRescored: number; newMatches: number; costUsd: number };
 
 const pct = (c?: { hits: number; misses: number }) => (c && c.hits + c.misses ? `${Math.round((c.hits / (c.hits + c.misses)) * 100)}%` : "-");
 
@@ -81,7 +81,8 @@ export default function OpsDashboard() {
       {report && (
         <p className="fade-in rounded-2xl border border-zinc-200 bg-zinc-50 px-6 py-3 text-sm" aria-live="polite">
           Refresh: {report.added} new{report.simulated ? ` (${report.simulated} simulated)` : ""} · {report.closed} closed · {report.usersChecked} users
-          checked · {report.jobsRescored} jobs re-scored · <span className="font-semibold">{report.newMatches} new matches</span> · ${report.costUsd.toFixed(4)}
+          checked{report.usersFailed ? ` (${report.usersFailed} failed)` : ""}{report.usersSkipped ? ` · ${report.usersSkipped} left for the next run` : ""} ·{" "}
+          {report.jobsRescored} jobs re-scored · <span className="font-semibold">{report.newMatches} new matches</span> · ${report.costUsd.toFixed(4)}
         </p>
       )}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
