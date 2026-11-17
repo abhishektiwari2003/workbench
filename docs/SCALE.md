@@ -93,7 +93,61 @@ At 100k users, total is roughly 5-15 small containers plus one managed database.
 
 ## 7. This app specifically
 
-_(filled at kickoff for the app that was built: which endpoints are hot, which LLM calls go async, which tables need indexes, what gets cached)_
+**Shape of the load.** Job data is shared and small: about 3,300 jobs and ~20 MB normalised, the same for every user. Only the per-candidate LLM scoring grows with users. So the plan is to make job ingest a scheduled background job, and to make matching cheap, queued and cached.
+
+**Measured per-request cost and tokens (POST /api/match, sample resume):**
+
+| Call | Model | Input tok | Output tok | Latency | Cost |
+|---|---|---|---|---|---|
+| Resume → profile (1 call) | Haiku 5.5, effort low | ~1,000 | ~500 | ~2.5s (parallel with board load) | ~$0.0004 |
+| Score 20 jobs (4 calls × 5 jobs) | Sonnet 5.5, effort low | ~3,400 each | ~800 each | ~6-8s (parallel) | ~$0.060 |
+| **Total per candidate** | | **~15k** | **~3.7k** | **~9-10s** | **~$0.06** (repeat resume: $0) |
+
+At 100k MAU × 2 searches/month = 200k searches ≈ **$12k/month** before the optimisations below, and roughly $4-6k after them.
+
+**Peak LLM load:** 30k DAU × 1 search/day ≈ 0.35 searches/s on average, ~3.5/s at peak = ~17 Claude calls/s and ~50k input tokens/s on Sonnet. That needs a raised Anthropic rate-limit tier before launch, plus the queue below.
+
+**Hot endpoints:**
+
+| Endpoint | Heat | At scale |
+|---|---|---|
+| `POST /api/match` | Expensive (5 LLM calls, ~10s) | Return `202 {id}` right away and enqueue (SQS/BullMQ); workers run the pipeline; UI polls `GET /api/matches/:id` or listens over SSE. Per-user and per-IP quotas in Redis |
+| `GET /api/matches/:id` | Read-heavy, cheap | Redis first, Postgres fallback; cacheable per id |
+| `GET /api/jobs` | Every page load | Serve from Redis/in-process snapshot; never triggers a board fetch on the request path |
+| `POST /api/resume` | CPU (PDF parse), bursty | Fine inline up to 5 MB; move to a worker if p95 climbs |
+| `POST /api/jobs/refresh` | Scheduler only (every 15-30 min) | Becomes a cron worker; nothing user-facing calls it |
+
+**What moves to a queue / batch:**
+1. **Scoring calls**: queued per candidate, worker concurrency sized to the Anthropic tier.
+2. **Job ingest**: a cron worker fetches the 10 boards, diffs them, writes to Postgres and publishes a versioned snapshot to Redis/S3. App instances load the snapshot into memory (20 MB) when the version changes. Today every instance fetches the boards itself; that's fine for one instance, wasteful for 12.
+3. **Job digests (biggest cost lever)**: on ingest, Haiku extracts each *new or changed* job's must-haves into ~150 tokens through the **Batch API (50% off)**. That's once per job, shared by every candidate. Scoring input drops from ~1,400 chars of raw text per job to the digest, so per-candidate cost falls roughly 2-3x.
+4. **New-job alerts**: after each refresh, run only *new* jobs through the free prefilter against saved profiles, and score just the hits, in batch.
+
+**Tables and indexes (Postgres):**
+
+```
+jobs(id text pk "gh:stripe:123", company, title, location, remote bool, department, url,
+     description text, digest jsonb, content_hash, first_seen_at, last_seen_at, closed_at null)
+  idx: (closed_at) WHERE closed_at IS NULL     -- the live job set
+       (company), (first_seen_at)              -- "new since my last visit"
+profiles(id uuid pk, resume_sha256 unique, profile jsonb, created_at)   -- no raw resume stored
+match_runs(id uuid pk, profile_id fk, created_at, cost_usd numeric, stats jsonb)
+  idx: (profile_id, created_at desc)
+matches(run_id fk, job_id fk, score smallint, reasons jsonb, gaps jsonb, pk(run_id, job_id))
+  idx: (job_id)                                -- flag/notify when a job closes
+```
+
+**Redis:**
+- `jobs:snapshot:<version>`: the normalised live job set, plus `jobs:current` pointing at it.
+- `llm:<sha256(model+system+input)>`: the response cache that `lib/llm.ts` already keys this way. Swap the Map for Redis.
+- `profile:<resume_sha256>`: re-uploading the same resume skips Haiku.
+- `score:<profile_hash>:<job_id>:<content_hash>`: re-runs and "check for new jobs" only pay for jobs not scored before.
+- `match:<id>`: saved results with a 7-day TTL (Postgres is the durable copy).
+- `rl:<route>:<ip|user>`: the rate limiter, same interface as `lib/rate-limit.ts`.
+
+**Already in place in the code (single instance):** the job snapshot is served stale-while-revalidate, so no user request waits on a board refetch after warm-up; `runMatch` has a 45s overall deadline and is single-flight per resume hash (concurrent duplicates share one run); the LLM wait queue is capped at 100 and fails fast as "overloaded"; `/api/match` has a per-instance global ceiling (60/min) on top of the per-IP limit, because IP headers can be spoofed; request bodies are capped while streaming. The prefilter costs about 70ms of CPU per search on the real 3,269-job set; a per-job token index at ingest is the next step if that shows up in p99.
+
+**What breaks first here:** the Anthropic tokens-per-minute limit on Sonnet at peak, then the cost line. The fixes, in order: queue + concurrency cap, the score cache, job digests, then measuring whether Haiku can do a first-pass rerank of 40 → 20 without hurting the eval.
 
 ## 8. Questions and answers
 
